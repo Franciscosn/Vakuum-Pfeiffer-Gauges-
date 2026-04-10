@@ -802,6 +802,14 @@ class PressureLoggerApp:
         self.maxi_screensave_var = tk.StringVar(value="0")
         self.raw_command_var = tk.StringVar()
         self.control_visible_var = tk.BooleanVar(value=False)
+        self.channel_display_name_var = tk.StringVar(value="")
+
+        self.channel_names_by_device: Dict[str, Dict[int, str]] = {
+            "TPG 262": {1: "Kanal 1", 2: "Kanal 2"},
+            "MaxiGauge": {i: f"Kanal {i}" for i in range(1, 7)},
+        }
+
+        self._load_user_config()
 
         self.channel_names_by_device: Dict[str, Dict[int, str]] = {
             "TPG 262": {1: "Kanal 1", 2: "Kanal 2"},
@@ -1041,6 +1049,9 @@ class PressureLoggerApp:
         self.maxi_screensave_info.grid(row=11, column=4, sticky="w")
         self.maxi_extra_widgets.extend([self.maxi_screensave_entry, self.maxi_screensave_btn, self.maxi_screensave_info])
 
+        ttk.Label(ctrl, text="Anzeigename").grid(row=12, column=0, sticky="w", pady=3)
+        ttk.Entry(ctrl, textvariable=self.channel_display_name_var, width=12).grid(row=12, column=1, sticky="w", pady=3)
+        ttk.Button(ctrl, text="Namen speichern", command=self.set_display_channel_name).grid(row=12, column=2, sticky="ew", padx=4, pady=3)
 
         plot_frame = ttk.Frame(right)
         plot_frame.pack(fill="both", expand=True)
@@ -1120,19 +1131,13 @@ class PressureLoggerApp:
         dev = self.device_var.get()
         return self.channel_names_by_device.get(dev, {}).get(ch, f"Kanal {ch}")
 
-    def _combined_channel_label(self, ch: int) -> str:
-        name = self._channel_display_name(ch).strip()
-        default_name = f"Kanal {ch}"
-        if not name or name == default_name:
-            return default_name
-        return f"Kanal {ch} – {name}"
-
     def _apply_channel_labels(self) -> None:
         for ch in range(1, 7):
+            label = self._channel_display_name(ch)
             if ch in self.channel_cards:
-                self.channel_cards[ch]["frame"].configure(text=self._combined_channel_label(ch))
+                self.channel_cards[ch]["frame"].configure(text=f"Kanal {ch} – {label}")
         for ch, line in self.lines.items():
-            line.set_label(self._combined_channel_label(ch))
+            line.set_label(f"Kanal {ch} – {self._channel_display_name(ch)}")
         self._apply_plot_visibility(redraw=True)
 
     def show_help_file(self, key: str, title: str) -> None:
@@ -1307,7 +1312,7 @@ class PressureLoggerApp:
         self.lines = {}
         active_channels = 2 if self.device_var.get() == "TPG 262" else 6
         for ch in range(1, active_channels + 1):
-            (line,) = self.ax.plot([], [], label=self._combined_channel_label(ch))
+            (line,) = self.ax.plot([], [], label=f"Kanal {ch} – {self._channel_display_name(ch)}")
             self.lines[ch] = line
         self._apply_plot_visibility(redraw=False)
         self.canvas.draw_idle()
@@ -1342,7 +1347,7 @@ class PressureLoggerApp:
             self.external_ax.grid(True, which="both", alpha=0.4)
             self.external_lines = {}
             for ch in self.lines.keys():
-                (line,) = self.external_ax.plot([], [], label=self._combined_channel_label(ch))
+                (line,) = self.external_ax.plot([], [], label=f"Kanal {ch} – {self._channel_display_name(ch)}")
                 self.external_lines[ch] = line
 
         for ch in self.lines.keys():
@@ -1681,7 +1686,7 @@ class PressureLoggerApp:
             if ch in sample.data:
                 s, v = sample.data[ch]
                 self.channel_value_vars[ch].set(f"{v:.4E}" if v == v else "—")
-                self.channel_status_vars[ch].set(f"{self._combined_channel_label(ch)}: {printable_status(s)}")
+                self.channel_status_vars[ch].set(f"{self._channel_display_name(ch)}: {printable_status(s)}")
                 self._set_channel_lights(ch, s)
 
     def _last_positive_plot_value(self, ch: int) -> Optional[float]:
@@ -1813,7 +1818,16 @@ class PressureLoggerApp:
 
     def _sync_selected_channel_name_input(self) -> None:
         ch = self._selected_channel()
-        self.channel_name_var.set(self._channel_display_name(ch))
+        self.channel_display_name_var.set(self._channel_display_name(ch))
+
+    def set_display_channel_name(self) -> None:
+        ch = self._selected_channel()
+        dev = self.device_var.get()
+        new_name = self.channel_display_name_var.get().strip() or f"Kanal {ch}"
+        self.channel_names_by_device.setdefault(dev, {})[ch] = new_name
+        self._apply_channel_labels()
+        self._save_user_config()
+        self.log_msg(f"[INFO] Anzeigename gespeichert: Kanal {ch} -> {new_name!r}")
 
     def set_unit(self) -> None:
         unit_code = UNITS[self.unit_var.get()]
