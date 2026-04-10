@@ -811,6 +811,13 @@ class PressureLoggerApp:
 
         self._load_user_config()
 
+        self.channel_names_by_device: Dict[str, Dict[int, str]] = {
+            "TPG 262": {1: "Kanal 1", 2: "Kanal 2"},
+            "MaxiGauge": {i: f"Kanal {i}" for i in range(1, 7)},
+        }
+
+        self._load_user_config()
+
         self.status_connection_var = tk.StringVar(value="Nicht verbunden")
         self.status_measurement_var = tk.StringVar(value="Nicht verbunden")
         self.status_samples_var = tk.StringVar(value="0")
@@ -1007,14 +1014,13 @@ class PressureLoggerApp:
         self._info_button(ctrl, 7, 4, "ofc", "Hilfe: Offset-Korrektur").grid(row=7, column=4, sticky="w")
 
         self.maxi_extra_widgets = []
-        ttk.Label(ctrl, text="Kanalname").grid(row=8, column=0, sticky="w", pady=3)
+        ttk.Label(ctrl, text="Kanalname (Anzeige)").grid(row=8, column=0, sticky="w", pady=3)
         self.maxi_channel_name_entry = ttk.Entry(ctrl, textvariable=self.channel_name_var, width=12)
         self.maxi_channel_name_entry.grid(row=8, column=1, sticky="w", pady=3)
         self.maxi_channel_name_btn = ttk.Button(ctrl, text="Name setzen", command=self.set_channel_name)
         self.maxi_channel_name_btn.grid(row=8, column=2, sticky="ew", padx=4, pady=3)
         self.maxi_channel_name_info = self._info_button(ctrl, 8, 4, "channel_name", "Hilfe: Kanalname")
         self.maxi_channel_name_info.grid(row=8, column=4, sticky="w")
-        self.maxi_extra_widgets.extend([self.maxi_channel_name_entry, self.maxi_channel_name_btn, self.maxi_channel_name_info])
 
         ttk.Label(ctrl, text="Digits").grid(row=9, column=0, sticky="w", pady=3)
         self.maxi_digits_cb = ttk.Combobox(ctrl, textvariable=self.maxi_digits_var, state="readonly", width=12, values=list(MAXIGAUGE_DIGITS.keys()))
@@ -1893,15 +1899,13 @@ class PressureLoggerApp:
         self._run_device_action(action)
 
     def set_channel_name(self) -> None:
-        if self.device_var.get() != "MaxiGauge":
-            return
         gauge = self._selected_channel()
-        name = self.channel_name_var.get().strip()
-        def action(driver: BaseGaugeDriver) -> str:
-            assert isinstance(driver, MaxiGaugeDriver)
-            driver.set_channel_name(gauge, name)
-            return f"[INFO] Kanal {gauge} -> Name {name!r}"
-        self._run_device_action(action)
+        name = self.channel_name_var.get().strip() or f"Kanal {gauge}"
+        dev = self.device_var.get()
+        self.channel_names_by_device.setdefault(dev, {})[gauge] = name
+        self._apply_channel_labels()
+        self._save_user_config()
+        self.log_msg(f"[INFO] Anzeigename gesetzt: Kanal {gauge} -> {name!r}")
 
     def set_maxi_digits(self) -> None:
         if self.device_var.get() != "MaxiGauge":
