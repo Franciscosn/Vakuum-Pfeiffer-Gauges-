@@ -27,6 +27,7 @@ Wichtige Begriffe für Nicht-Programmierer:innen
 from __future__ import annotations
 
 import csv
+import json
 import queue
 import threading
 import time
@@ -89,8 +90,8 @@ MAXIGAUGE_FSR_VALUES = {
 MAXIGAUGE_DIGITS = {"2": 2, "3": 3}
 
 HELP_FILENAMES = {
-    "diagnose": "diagnose_lesen_hilfe.txt",
-    "raw": "rohkommandos_pfeiffer.txt",
+    "diagnose": "diagnose_lesen_hilfe_vollstaendig.txt",
+    "raw": "rohkommandos_pfeiffer_vollstaendig.txt",
     "unit": "hilfe_einheit.txt",
     "sensor": "hilfe_gauge_ein_aus.txt",
     "read_now": "hilfe_messwert_jetzt_lesen.txt",
@@ -105,6 +106,8 @@ HELP_FILENAMES = {
     "contrast": "hilfe_contrast.txt",
     "screensave": "hilfe_screensave.txt",
 }
+HELP_DIRNAME = "texts"
+CONFIG_FILENAME = ".cdt_pressure_logger_config.json"
 
 
 def list_ports() -> List[str]:
@@ -799,6 +802,14 @@ class PressureLoggerApp:
         self.maxi_screensave_var = tk.StringVar(value="0")
         self.raw_command_var = tk.StringVar()
         self.control_visible_var = tk.BooleanVar(value=False)
+        self.channel_display_name_var = tk.StringVar(value="")
+
+        self.channel_names_by_device: Dict[str, Dict[int, str]] = {
+            "TPG 262": {1: "Kanal 1", 2: "Kanal 2"},
+            "MaxiGauge": {i: f"Kanal {i}" for i in range(1, 7)},
+        }
+
+        self._load_user_config()
 
         self.status_connection_var = tk.StringVar(value="Nicht verbunden")
         self.status_measurement_var = tk.StringVar(value="Nicht verbunden")
@@ -855,6 +866,7 @@ class PressureLoggerApp:
         ttk.Label(top, text="Port").grid(row=0, column=3, sticky="w", pady=2)
         self.port_cb = ttk.Combobox(top, textvariable=self.port_var, state="readonly", width=12)
         self.port_cb.grid(row=0, column=4, sticky="ew", padx=(4, 0), pady=2)
+        self.port_cb.bind("<<ComboboxSelected>>", lambda e: self._save_user_config())
 
         ttk.Button(top, text="Verbinden", command=self.connect, width=12).grid(row=1, column=0, columnspan=1, sticky="ew", pady=3, padx=(0, 4))
         ttk.Button(top, text="Trennen", command=self.disconnect, width=12).grid(row=1, column=1, columnspan=1, sticky="ew", pady=3, padx=(0, 4))
@@ -955,6 +967,7 @@ class PressureLoggerApp:
         ttk.Label(ctrl, text="Kanal").grid(row=0, column=0, sticky="w", pady=3)
         self.control_channel_cb = ttk.Combobox(ctrl, textvariable=self.control_channel_var, state="readonly", width=8)
         self.control_channel_cb.grid(row=0, column=1, sticky="w", pady=3)
+        self.control_channel_cb.bind("<<ComboboxSelected>>", lambda e: self._sync_selected_channel_name_input())
         ttk.Button(ctrl, text="Gauge EIN", command=lambda: self.set_sensor_state(True)).grid(row=0, column=2, sticky="ew", padx=4, pady=3)
         ttk.Button(ctrl, text="Gauge AUS", command=lambda: self.set_sensor_state(False)).grid(row=0, column=3, sticky="ew", padx=4, pady=3)
         self._info_button(ctrl, 0, 4, "sensor", "Hilfe: Gauge ein/aus").grid(row=0, column=4, sticky="w")
@@ -1030,6 +1043,10 @@ class PressureLoggerApp:
         self.maxi_screensave_info.grid(row=11, column=4, sticky="w")
         self.maxi_extra_widgets.extend([self.maxi_screensave_entry, self.maxi_screensave_btn, self.maxi_screensave_info])
 
+        ttk.Label(ctrl, text="Anzeigename").grid(row=12, column=0, sticky="w", pady=3)
+        ttk.Entry(ctrl, textvariable=self.channel_display_name_var, width=12).grid(row=12, column=1, sticky="w", pady=3)
+        ttk.Button(ctrl, text="Namen speichern", command=self.set_display_channel_name).grid(row=12, column=2, sticky="ew", padx=4, pady=3)
+
         plot_frame = ttk.Frame(right)
         plot_frame.pack(fill="both", expand=True)
 
@@ -1054,7 +1071,68 @@ class PressureLoggerApp:
     def _help_path(self, key: str) -> Path:
         """Liefert den Dateipfad zur angeforderten Hilfedatei."""
         filename = HELP_FILENAMES[key]
-        return Path(__file__).with_name(filename)
+        return Path(__file__).with_name(HELP_DIRNAME) / filename
+
+    def _config_path(self) -> Path:
+        return Path(__file__).with_name(CONFIG_FILENAME)
+
+    def _load_user_config(self) -> None:
+        path = self._config_path()
+        if not path.exists():
+            return
+        try:
+            cfg = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        last_device = cfg.get("last_device")
+        if last_device in ("TPG 262", "MaxiGauge"):
+            self.device_var.set(last_device)
+
+        last_port = cfg.get("last_port")
+        if isinstance(last_port, str):
+            self.port_var.set(last_port)
+
+        names_cfg = cfg.get("channel_names", {})
+        if isinstance(names_cfg, dict):
+            for dev in ("TPG 262", "MaxiGauge"):
+                dev_map = names_cfg.get(dev, {})
+                if not isinstance(dev_map, dict):
+                    continue
+                for ch_s, label in dev_map.items():
+                    try:
+                        ch = int(ch_s)
+                    except Exception:
+                        continue
+                    if isinstance(label, str) and label.strip():
+                        self.channel_names_by_device.setdefault(dev, {})[ch] = label.strip()
+
+    def _save_user_config(self) -> None:
+        cfg = {
+            "last_device": self.device_var.get(),
+            "last_port": self.port_var.get(),
+            "channel_names": {
+                dev: {str(ch): label for ch, label in names.items()}
+                for dev, names in self.channel_names_by_device.items()
+            },
+        }
+        try:
+            self._config_path().write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _channel_display_name(self, ch: int) -> str:
+        dev = self.device_var.get()
+        return self.channel_names_by_device.get(dev, {}).get(ch, f"Kanal {ch}")
+
+    def _apply_channel_labels(self) -> None:
+        for ch in range(1, 7):
+            label = self._channel_display_name(ch)
+            if ch in self.channel_cards:
+                self.channel_cards[ch]["frame"].configure(text=f"Kanal {ch} – {label}")
+        for ch, line in self.lines.items():
+            line.set_label(f"Kanal {ch} – {self._channel_display_name(ch)}")
+        self._apply_plot_visibility(redraw=True)
 
     def show_help_file(self, key: str, title: str) -> None:
         """Öffnet ein separates Fenster und zeigt den Hilfetext an."""
@@ -1155,6 +1233,7 @@ class PressureLoggerApp:
         self.port_cb["values"] = ports
         if ports and self.port_var.get() not in ports:
             self.port_var.set(ports[0])
+        self._save_user_config()
 
     def _update_file_status_label(self) -> None:
         if self.logging_enabled and self.csv_file is not None:
@@ -1212,8 +1291,11 @@ class PressureLoggerApp:
                     pass
 
         self._rebuild_lines()
+        self._sync_selected_channel_name_input()
+        self._apply_channel_labels()
         self.clear_plot()
         self._update_file_status_label()
+        self._save_user_config()
 
     def _rebuild_lines(self) -> None:
         self.ax.clear()
@@ -1224,7 +1306,7 @@ class PressureLoggerApp:
         self.lines = {}
         active_channels = 2 if self.device_var.get() == "TPG 262" else 6
         for ch in range(1, active_channels + 1):
-            (line,) = self.ax.plot([], [], label=f"Kanal {ch}")
+            (line,) = self.ax.plot([], [], label=f"Kanal {ch} – {self._channel_display_name(ch)}")
             self.lines[ch] = line
         self._apply_plot_visibility(redraw=False)
         self.canvas.draw_idle()
@@ -1259,7 +1341,7 @@ class PressureLoggerApp:
             self.external_ax.grid(True, which="both", alpha=0.4)
             self.external_lines = {}
             for ch in self.lines.keys():
-                (line,) = self.external_ax.plot([], [], label=f"Kanal {ch}")
+                (line,) = self.external_ax.plot([], [], label=f"Kanal {ch} – {self._channel_display_name(ch)}")
                 self.external_lines[ch] = line
 
         for ch in self.lines.keys():
@@ -1339,6 +1421,7 @@ class PressureLoggerApp:
             )
             self.status_connection_var.set(f"Verbunden mit {port}")
             self.log_msg(f"[INFO] Verbunden mit {port} bei 9600 Baud")
+            self._save_user_config()
             self.clear_plot()
             self.start_time = None
             self.log_start_time = None
@@ -1597,7 +1680,7 @@ class PressureLoggerApp:
             if ch in sample.data:
                 s, v = sample.data[ch]
                 self.channel_value_vars[ch].set(f"{v:.4E}" if v == v else "—")
-                self.channel_status_vars[ch].set(printable_status(s))
+                self.channel_status_vars[ch].set(f"{self._channel_display_name(ch)}: {printable_status(s)}")
                 self._set_channel_lights(ch, s)
 
     def _last_positive_plot_value(self, ch: int) -> Optional[float]:
@@ -1726,6 +1809,19 @@ class PressureLoggerApp:
 
     def _selected_channel(self) -> int:
         return int(self.control_channel_var.get())
+
+    def _sync_selected_channel_name_input(self) -> None:
+        ch = self._selected_channel()
+        self.channel_display_name_var.set(self._channel_display_name(ch))
+
+    def set_display_channel_name(self) -> None:
+        ch = self._selected_channel()
+        dev = self.device_var.get()
+        new_name = self.channel_display_name_var.get().strip() or f"Kanal {ch}"
+        self.channel_names_by_device.setdefault(dev, {})[ch] = new_name
+        self._apply_channel_labels()
+        self._save_user_config()
+        self.log_msg(f"[INFO] Anzeigename gespeichert: Kanal {ch} -> {new_name!r}")
 
     def set_unit(self) -> None:
         unit_code = UNITS[self.unit_var.get()]
