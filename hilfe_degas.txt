@@ -1,0 +1,10 @@
+DEGAS
+
+Degas wird bei bestimmten Vakuumsensoren verwendet, um die Sensoroberfläche auszugasen bzw. zu reinigen.
+
+Wichtig:
+- Nicht jedes Gauge unterstützt Degas.
+- Beim MaxiGauge ist Degas typischerweise nur für bestimmte Kanäle bzw. Sensorarten sinnvoll.
+- Degas sollte nur verwendet werden, wenn der Sensortyp und die Druckbedingungen dazu passen.
+
+Wenn das Gerät NAK sendet, ist Degas für diesen Sensor oder in diesem Zustand nicht erlaubt.

@@ -1,0 +1,13 @@
+EINHEIT
+
+Damit legst du fest, in welcher Druckeinheit der Controller die Werte ausgibt.
+
+Typische Codes:
+0 = mbar
+1 = Torr
+2 = Pa
+
+Wichtig:
+- Die physikalische Messung ändert sich nicht. Nur die Darstellung und die serielle Ausgabe ändern sich.
+- Wenn du bestehende CSV-Dateien mit neuen Messungen vergleichst, achte darauf, dass die Einheit gleich geblieben ist.
+- Für deine Vakuumarbeit ist mbar meist die praktischste Standardwahl.

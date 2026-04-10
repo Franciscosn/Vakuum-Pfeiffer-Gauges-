@@ -1,0 +1,6 @@
+SCREENSAVE / DCS
+
+Damit wird die Zeit bis zum Bildschirmschoner bzw. zur Displayabdunklung des MaxiGauge gesetzt.
+
+Je nach Gerät ist der Wert meist in Stunden angegeben.
+0 bedeutet typischerweise: aus bzw. keine Verzögerung gemäß Gerätelogik.

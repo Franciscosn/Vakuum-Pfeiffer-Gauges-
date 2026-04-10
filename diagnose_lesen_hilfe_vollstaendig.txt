@@ -1,0 +1,192 @@
+Diagnose lesen – wie die Ausgabe zu interpretieren ist
+
+Ziel der Diagnose
+
+Die Diagnose soll dir zeigen,
+- welche Sensoren erkannt werden,
+- welche Kanäle eingeschaltet oder ausgeschaltet sind,
+- welche Einheit und Parameter aktiv sind,
+- ob Fehler anliegen,
+- und ob ein Kanal überhaupt sinnvoll messfähig ist.
+
+--------------------------------------------------
+1) Druckantworten PRx
+--------------------------------------------------
+
+Typischer Aufbau:
+status,wert
+
+Beispiel:
+0,1.23E-05
+
+Bedeutung der Statuscodes:
+0 = ok
+1 = underrange
+2 = overrange
+3 = sensor error
+4 = sensor off
+5 = no sensor / not identified
+6 = identification error
+
+Interpretation:
+0,1.23E-05
+-> Kanal misst normal, Druck ist 1.23e-05
+
+2,1.00E+03
+-> overrange, der Kanal ist oberhalb des normalen Messbereichs
+   Bei einem Pirani-/Kombisensor kann das bei Atmosphäre völlig normal sein.
+   Der Zahlenwert ist dann nicht immer als präziser Druck zu verstehen.
+
+4,xxx
+-> Sensor ist aus oder vom Controller als aus betrachtet.
+
+5,xxx
+-> Kein Sensor erkannt oder nicht identifiziert.
+
+--------------------------------------------------
+2) SEN – Sensor on/off / Schaltstatus
+--------------------------------------------------
+
+SEN gibt je Kanal den Schaltstatus zurück.
+Die genaue Bedeutung hängt etwas vom Gerät ab, praktisch wichtig ist:
+
+0 = nicht schaltbar / keine Änderung / nicht sinnvoll fernschaltbar
+1 = aus
+2 = an
+
+Wenn du also vor einem Schaltversuch siehst:
+SEN = [0, 2]
+
+Dann bedeutet das typischerweise:
+- Kanal 1 lässt sich nicht sinnvoll per RS-232 schalten oder meldet keinen normalen Schaltzustand
+- Kanal 2 ist an
+
+Wenn ein Einschaltbefehl NAK liefert und SEN danach weiter 0 zeigt,
+ist das ein starkes Indiz, dass der Kanal nicht fernschaltbar ist.
+
+--------------------------------------------------
+3) TID / Identifikation
+--------------------------------------------------
+
+TID gibt beim TPG 262 an, welche Sensoren erkannt wurden.
+Das ist hilfreich, um zu unterscheiden zwischen:
+- wirklich vorhandenem Sensor,
+- falschem Sensor,
+- nicht erkanntem Sensor,
+- oder Kanal ohne Sensor.
+
+Praktisch:
+Erst TID lesen, dann PRx und SEN interpretieren.
+
+--------------------------------------------------
+4) ERR – Fehlerstatus
+--------------------------------------------------
+
+ERR ist besonders beim TPG 262 wichtig.
+Wenn Einschalten, Degas oder andere Befehle scheitern, sollte danach ERR gelesen werden.
+
+Typischer sinnvoller Ablauf:
+ERR
+!RES,1
+ERR
+SEN
+PR1 / PR2
+
+Wenn nach RES,1 der Fehler weg ist und PR wieder sinnvoll antwortet,
+war wahrscheinlich nur ein aktiver Fehlerzustand blockierend.
+
+--------------------------------------------------
+5) UNI – Einheit
+--------------------------------------------------
+
+0 = mbar / bar
+1 = Torr
+2 = Pa
+
+Wenn Zahlenwerte unplausibel wirken, immer prüfen,
+ob die Einheit versehentlich umgestellt wurde.
+
+--------------------------------------------------
+6) FIL – Filter
+--------------------------------------------------
+
+Filter beeinflusst, wie stark Messwerte geglättet werden.
+
+Schneller Filter:
+- reagiert direkter
+- kann unruhiger wirken
+
+Langsamer Filter:
+- glattere Anzeige
+- verzögert reale Änderungen stärker
+
+Wenn Messwerte „träge“ wirken, kann FIL eine Ursache sein.
+
+--------------------------------------------------
+7) CAL – Kalibrierfaktor
+--------------------------------------------------
+
+CAL verändert die Zuordnung des Sensorsignals zum angezeigten Wert.
+Wenn hier ungewöhnliche Werte gesetzt sind, können Messwerte systematisch falsch sein.
+
+Für normale Tests sollte CAL eher nahe am Standardwert liegen,
+oft 1.000.
+
+--------------------------------------------------
+8) FSR – Full Scale / lineare Sensoren
+--------------------------------------------------
+
+FSR ist vor allem bei linearen oder analogen Sensoren wichtig.
+Wenn FSR falsch gesetzt ist, dann kann der Controller den Kanal falsch skalieren.
+
+Typisches Symptom:
+- Zahlen sehen formal plausibel aus,
+- liegen aber um Faktor 10 oder 100 daneben.
+
+--------------------------------------------------
+9) OFC – Offset-Korrektur
+--------------------------------------------------
+
+OFC beeinflusst die Offsetkorrektur.
+Wenn ein Kanal im oberen Druckbereich dauerhaft verschoben erscheint,
+kann OFC eine Rolle spielen.
+
+--------------------------------------------------
+10) DGS – Degas
+--------------------------------------------------
+
+DGS zeigt, ob Degas aktiv ist.
+Degas ist kein normaler Dauerzustand.
+Wenn DGS aktiv ist, sollte man wissen, warum.
+
+--------------------------------------------------
+11) Was ist eine gute Diagnose-Reihenfolge?
+--------------------------------------------------
+
+Wenn ein Kanal nicht tut, was er soll:
+
+1. Identifikation lesen (TID oder vergleichbare Info)
+2. SEN lesen
+3. PRx lesen
+4. ERR lesen
+5. Falls nötig: RES,1
+6. Nochmals SEN und PRx lesen
+
+Damit kannst du meist sauber unterscheiden zwischen:
+- Sensor nicht vorhanden
+- Sensor vorhanden, aber aus
+- Sensor vorhanden, aber nicht fernschaltbar
+- Sensor im Fehlerzustand
+- Sensor misst normal, aber ist im OR/UR-Bereich
+
+--------------------------------------------------
+12) Warum sieht man manchmal OR mit einem Zahlenwert?
+--------------------------------------------------
+
+Das ist normal.
+Der Controller kann gleichzeitig
+- einen Status wie overrange melden
+- und trotzdem einen numerischen Rohwert liefern.
+
+Für die physikalische Interpretation ist dann der Status wichtiger als die Zahl.
+Die Zahl kann für Trenddarstellung nützlich sein, ist aber nicht zwingend als exakter Druck zu lesen.

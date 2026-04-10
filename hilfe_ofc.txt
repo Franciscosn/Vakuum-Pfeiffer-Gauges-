@@ -1,0 +1,15 @@
+OFFSET-KORREKTUR / OFC
+
+Damit wird eine Offsetkorrektur für geeignete Sensoren gesteuert.
+
+Typische Werte:
+0 = off
+1 = on
+2 = auto
+
+Bedeutung:
+- off: keine Offsetkorrektur
+- on: Offsetkorrektur aktiv
+- auto: Controller führt die Korrektur automatisch aus, sofern unterstützt
+
+Nur ändern, wenn du weißt, dass der verwendete Sensortyp diesen Parameter sinnvoll nutzt.

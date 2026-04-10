@@ -1,0 +1,6 @@
+CONTRAST / DCC
+
+Damit stellst du den Displaykontrast des MaxiGauge ein.
+
+Das ist nur für die Anzeige am Gerät relevant, nicht für die eigentliche Messung.
+Wenn das Display sehr blass oder kaum lesbar ist, kann dieser Wert helfen.

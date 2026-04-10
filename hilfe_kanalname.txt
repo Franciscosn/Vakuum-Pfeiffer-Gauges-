@@ -1,0 +1,12 @@
+KANALNAME / CID
+
+Beim MaxiGauge kann jedem Kanal ein kurzer Name gegeben werden.
+
+Beispiele:
+P1
+LOAD
+PROC
+TURB
+
+Im Programm werden nur alphanumerische Zeichen verwendet, maximal 4 Zeichen.
+Der Name dient vor allem der besseren Zuordnung auf dem Controller.

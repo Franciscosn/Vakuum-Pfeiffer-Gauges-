@@ -1,0 +1,159 @@
+Pfeiffer Rohkommandos – kompakte Vollübersicht für CDT pressure logger
+
+Wichtiges Grundprinzip
+
+1) Die Geräte benutzen ASCII-Kommandos über RS-232.
+2) Viele Befehle laufen als: Kommando senden -> ACK abwarten -> ENQ senden -> Datenantwort lesen.
+3) Reine Schreibbefehle liefern oft nur ACK/NAK.
+4) Im Rohkommando-Feld des Programms bedeutet ein vorangestelltes !:
+   !KOMMANDO  -> es wird nur ACK erwartet, keine Datenantwort.
+
+Beispiele:
+!UNI,0
+!SEN,2,0
+PR1
+SEN
+
+NAK richtig interpretieren
+
+NAK bedeutet nicht automatisch, dass die RS-232-Verbindung kaputt ist.
+Typische Gründe:
+- Der Befehl ist für diesen Sensortyp nicht erlaubt.
+- Der Kanal ist nicht fernschaltbar.
+- Die Parameterzahl oder der Wertebereich ist falsch.
+- Das Gerät ist in einem Zustand, in dem der Befehl abgelehnt wird.
+
+--------------------------------------------------
+TPG 262 – wichtige Rohkommandos
+--------------------------------------------------
+
+Lesen
+PR1           Druck von Kanal 1 lesen
+PR2           Druck von Kanal 2 lesen
+SEN           Sensor-Schaltstatus lesen
+UNI           Einheit lesen
+FIL           Filterstatus lesen
+CAL           Kalibrierfaktoren lesen
+FSR           Full-Scale-Einstellungen lesen
+OFC           Offset-Korrektur lesen
+DGS           Degas-Status lesen
+TID           Sensoridentifikation lesen
+ERR           Fehlerstatus lesen
+
+Schreiben / Steuern
+!COM,0        Continuous Mode 100 ms
+!COM,1        Continuous Mode 1 s
+!COM,2        Continuous Mode 1 min
+!UNI,0        Einheit mbar/bar
+!UNI,1        Einheit Torr
+!UNI,2        Einheit Pa
+!SEN,2,0      Kanal 1 einschalten
+!SEN,0,2      Kanal 2 einschalten
+!SEN,1,0      Kanal 1 ausschalten
+!SEN,0,1      Kanal 2 ausschalten
+!DGS,1,0      Degas Kanal 1 ein
+!DGS,0,1      Degas Kanal 2 ein
+!DGS,0,0      Degas aus
+!FIL,0,0      Filter schnell für beide / keine Änderung je nach Gerätelogik vermeiden
+!FIL,1,0      Beispiel: Kanal 1 standard
+!FIL,0,1      Beispiel: Kanal 2 standard
+!RES,1        Fehler quittieren / Rückkehr in Messbetrieb
+!SAV,0        Werk-/Default-Parametersatz laden
+!SAV,1        User-Parametersatz speichern oder laden, je nach Gerätelogik
+
+Hinweis zu SEN beim TPG 262
+0 = keine Änderung / bzw. nicht schaltbar je nach Antwortkontext
+1 = aus
+2 = an
+Wenn Einschalten mit NAK scheitert, danach oft sinnvoll:
+ERR
+!RES,1
+SEN
+PR1 oder PR2
+
+--------------------------------------------------
+MaxiGauge / TPG 256 A – wichtige Rohkommandos
+--------------------------------------------------
+
+Lesen
+PR1 .. PR6    Druck der Kanäle 1 bis 6 lesen
+SEN           Sensor-Schaltstatus aller 6 Kanäle lesen
+UNI           Einheit lesen
+FIL           Filter lesen
+OFC           Offset-Korrektur lesen
+FSR           Full Scale lesen
+DGS           Degas-Status lesen
+CID           Kanalnamen lesen
+CA1 .. CA6    Kalibrierfaktor einzelner Kanäle lesen
+DCD           Digits lesen
+DCC           Kontrast lesen
+DCS           Screensave lesen
+
+Schreiben / Steuern
+!UNI,0        mbar
+!UNI,1        Torr
+!UNI,2        Pa
+!SEN,2,0,0,0,0,0    Kanal 1 einschalten
+!SEN,1,0,0,0,0,0    Kanal 1 ausschalten
+!SEN,0,2,0,0,0,0    Kanal 2 einschalten
+!SEN,0,1,0,0,0,0    Kanal 2 ausschalten
+!DGS,0,0,0,1,0,0    Degas Kanal 4 ein
+!DGS,0,0,0,0,1,0    Degas Kanal 5 ein
+!DGS,0,0,0,0,0,1    Degas Kanal 6 ein
+!FIL,1,0,0,0,0,0    Filter Kanal 1 setzen
+!OFC,1,0,0,0,0,0    Offset-Korr. Kanal 1 setzen
+!FSR,3,3,3,3,3,3    Beispiel Full Scale setzen
+!CA1,1.000          Kalibrierfaktor Kanal 1 setzen
+!CID,P1  ,P2  ,P3  ,P4  ,P5  ,P6  Kanalnamen setzen
+!DCD,3             3 Digits
+!DCC,10            Kontrast 10
+!DCS,5             Screensave 5 h
+!SAV,1             Werkseinstellungen laden
+
+Wichtige Praxis-Hinweise
+
+- Nicht jeder angeschlossene Sensortyp lässt sich fernschalten.
+- Degas ist beim MaxiGauge typischerweise nur für bestimmte Kanäle vorgesehen.
+- Wenn ein SEN-Schaltbefehl NAK liefert, zuerst lesen:
+  SEN
+  PRx
+  ggf. CID
+
+--------------------------------------------------
+Sinnvolle Diagnose-Sequenzen
+--------------------------------------------------
+
+TPG 262 – Einschalten prüfen
+SEN
+TID
+ERR
+!RES,1
+SEN
+PR1
+oder
+PR2
+
+MaxiGauge – Kanal prüfen
+SEN
+PR1
+PR2
+PR3
+PR4
+PR5
+PR6
+CID
+
+--------------------------------------------------
+Vorsichtige / kritische Befehle
+--------------------------------------------------
+
+SAV ...       kann Einstellungen überschreiben
+SEN ...       kann Kanäle aus- oder einschalten
+DGS ...       nur bewusst benutzen
+FSR ...       verändert lineare Skalierung
+OFC ...       verändert Offsetkorrektur
+CID ...       ändert Kanalnamen
+DCC / DCS     nur Anzeigeparameter, aber trotzdem persistent
+
+Wenn unsicher:
+Zuerst lesende Befehle verwenden, also PRx, SEN, UNI, FIL, TID, ERR, CID.

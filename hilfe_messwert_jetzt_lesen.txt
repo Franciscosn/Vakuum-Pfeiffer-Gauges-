@@ -1,0 +1,22 @@
+MESSWERT JETZT LESEN
+
+Diese Funktion fragt sofort den aktuell ausgewählten Kanal ab, ohne eine laufende Langzeitmessung abzuwarten.
+
+Das ist nützlich für:
+- schnellen Verbindungstest
+- Prüfen, ob ein Gauge nach dem Einschalten Werte liefert
+- Testen einzelner Kanäle
+
+Typische Antwortform:
+status,wert
+Beispiel:
+0,1.23E-5
+
+Status:
+0 = ok
+1 = underrange
+2 = overrange
+3 = sensor error
+4 = sensor off
+5 = no sensor / not identified
+6 = identification error

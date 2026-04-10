@@ -1,0 +1,15 @@
+GAUGE EIN / AUS
+
+Diese Funktion versucht, ein angeschlossenes Gauge über den Controller per RS-232 ein- oder auszuschalten.
+
+Wichtig:
+- Nicht jedes Gauge unterstützt das.
+- Wenn der Controller mit NAK antwortet, wurde der Befehl abgelehnt.
+- Ein häufiger Grund ist: Das angeschlossene Sensormodell kann nicht fern-geschaltet werden.
+
+Interpretation bei SEN-Antworten:
+0 = dieses Gauge ist über diesen Befehl nicht schaltbar
+1 = Gauge ist aus
+2 = Gauge ist an
+
+Wenn du also beim Einschalten einen Fehler bekommst und SEN für den Kanal 0 liefert, ist genau das der Grund.

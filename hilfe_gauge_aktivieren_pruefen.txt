@@ -1,0 +1,16 @@
+GAUGE AKTIVIEREN + PRÜFEN
+
+Diese Komfortfunktion führt mehrere Schritte hintereinander aus:
+1. aktuellen SEN-Status lesen
+2. Versuch, das ausgewählte Gauge einzuschalten
+3. kurze Wartezeit
+4. SEN erneut lesen
+5. PRx-Messwert direkt abfragen
+
+Das ist praktisch, wenn du schnell sehen willst:
+- ob das Gauge überhaupt per RS-232 eingeschaltet werden kann
+- ob der Controller den Status wirklich auf EIN gesetzt hat
+- ob danach ein plausibler Messwert kommt
+
+Wenn SEN vorher oder nachher 0 ist, ist das Gauge nicht fernschaltbar.
+Wenn PRx danach trotzdem einen sinnvollen Wert liefert, ist das Gauge eventuell schon aktiv oder arbeitet unabhängig von der Schaltfunktion.

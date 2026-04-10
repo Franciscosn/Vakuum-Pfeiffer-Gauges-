@@ -1,0 +1,12 @@
+FILTER
+
+Der Filter glättet die Anzeige bzw. die ausgegebenen Messwerte zeitlich.
+
+Typische Wirkung:
+- fast: reagiert schnell, aber unruhiger
+- standard / medium: Kompromiss
+- slow: ruhiger, aber träger
+
+Der Filter ändert nicht den echten Druck, sondern nur, wie schnell die Ausgabe auf Änderungen reagiert.
+
+Für Pumpdown-Kurven ist ein schneller oder mittlerer Filter meist sinnvoll.

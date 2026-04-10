@@ -1,0 +1,8 @@
+DIGITS / DCD
+
+Beim MaxiGauge legt dieser Parameter fest, mit wie vielen Ziffern das Display arbeitet.
+
+Typische Werte:
+2 oder 3
+
+Mehr Ziffern bedeuten feinere Anzeige, aber nicht automatisch mehr echte Messgenauigkeit.

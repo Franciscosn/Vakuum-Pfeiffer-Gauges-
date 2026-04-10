@@ -1,0 +1,14 @@
+KALIBRIERFAKTOR
+
+Der Kalibrierfaktor korrigiert den angezeigten Messwert für Gase oder Sensoreigenschaften.
+
+1.000 bedeutet: keine zusätzliche Korrektur.
+
+Größer als 1:
+- der ausgegebene Wert wird entsprechend skaliert
+
+Kleiner als 1:
+- der ausgegebene Wert wird nach unten skaliert
+
+Das solltest du nur ändern, wenn du genau weißt, warum.
+Für normale Luft-/Standardmessungen ist 1.000 meist richtig.

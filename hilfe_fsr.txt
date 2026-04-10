@@ -1,0 +1,11 @@
+FULL SCALE / FSR
+
+FSR steht für den Full-Scale-Bereich eines linearen Sensors.
+
+Damit wird festgelegt, welcher Maximalbereich zum Sensor passt.
+Beispiele: 1 mbar, 10 mbar, 1000 mbar, 2 bar usw.
+
+Wichtig:
+- Das ist nur für passende lineare Sensoren relevant.
+- Bei falscher Einstellung kann der ausgegebene Druck falsch interpretiert werden.
+- Für klassische Pirani- oder Kaltkathoden-Gauges ist das oft nicht der zentrale Parameter.
