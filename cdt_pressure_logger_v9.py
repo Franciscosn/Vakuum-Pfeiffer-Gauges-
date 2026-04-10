@@ -1,4 +1,29 @@
 #!/usr/bin/env python3
+"""
+CDT Pressure Logger (wissenschaftlich kommentierte Variante)
+===========================================================
+
+Dieses Modul implementiert eine komplette Desktop-Anwendung für zwei
+Pfeiffer-Controllerfamilien (TPG 262 und MaxiGauge). Die Datei enthält
+bewusst sowohl GUI-Logik als auch Kommunikations- und Geräte-Logik, damit
+sie als "Single-File-Tool" direkt ausführbar bleibt.
+
+Grundidee der Software
+----------------------
+1) Über RS-232 werden ASCII-Kommandos an das Messgerät geschickt.
+2) Die Antwort folgt (geräteabhängig) dem Schema ACK/NAK + ENQ + Daten.
+3) Messwerte (Status + Druckwert) werden im Hintergrund gelesen.
+4) Die GUI zeigt live Zahlen, Status und Plot und kann optional in CSV loggen.
+
+Wichtige Begriffe für Nicht-Programmierer:innen
+------------------------------------------------
+- "Thread": Ein zusätzlicher Arbeitsablauf im Hintergrund, damit die
+  Benutzeroberfläche während des Messens reaktionsfähig bleibt.
+- "Queue": Eine sichere Warteschlange, über die Daten vom Hintergrundthread
+  zur GUI übertragen werden.
+- "Driver" (Treiberklasse): Python-Code, der die Gerätebefehle kapselt,
+  sodass die GUI nicht jedes Protokolldetail kennen muss.
+"""
 from __future__ import annotations
 
 import csv
@@ -31,6 +56,8 @@ STATUS_TEXT = {
     6: "identification error",
 }
 
+# Die folgenden Mappings übersetzen menschenlesbare GUI-Werte in numerische
+# Parametercodes, wie sie von den Geräten erwartet werden.
 TPG262_INTERVAL_MAP = {"100 ms": 0, "1 s": 1, "1 min": 2}
 MAXIGAUGE_INTERVALS = ["0.2 s", "0.5 s", "1 s", "2 s", "5 s"]
 MAXIGAUGE_INTERVAL_SECONDS = {"0.2 s": 0.2, "0.5 s": 0.5, "1 s": 1.0, "2 s": 2.0, "5 s": 5.0}
@@ -81,28 +108,41 @@ HELP_FILENAMES = {
 
 
 def list_ports() -> List[str]:
+    """Liefert alle aktuell verfügbaren seriellen Ports (z. B. COM3, /dev/ttyUSB0)."""
     return [p.device for p in serial.tools.list_ports.comports()]
 
 
 def make_default_csv_name(device_name: str) -> str:
+    """Erzeugt einen zeitgestempelten Standard-Dateinamen für Messdaten."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     device_slug = device_name.lower().replace(" ", "_")
     return str(Path.cwd() / f"{device_slug}_log_{ts}.csv")
 
 
 def printable_status(code: int) -> str:
+    """Übersetzt numerische Statuscodes in gut lesbaren Text."""
     return STATUS_TEXT.get(code, f"unknown ({code})")
 
 
 def parse_csv_ints(text: str) -> List[int]:
+    """Hilfsparser: '1,2,3' -> [1, 2, 3]."""
     return [int(part.strip()) for part in text.split(",") if part.strip()]
 
 
 def parse_csv_floats(text: str) -> List[float]:
+    """Hilfsparser: '1.0,2.5' -> [1.0, 2.5]."""
     return [float(part.strip()) for part in text.split(",") if part.strip()]
 
 
 def parse_seconds_label(text: str, default: float = 60.0) -> float:
+    """
+    Wandelt Benutzereingabe in Sekunden um und fängt fehlerhafte Eingaben ab.
+
+    Beispiel:
+        '30' -> 30.0
+        '0'  -> default
+        'abc' -> default
+    """
     try:
         value = float(str(text).strip().replace(',', '.'))
     except Exception:
@@ -114,12 +154,23 @@ def parse_seconds_label(text: str, default: float = 60.0) -> float:
 
 @dataclass
 class Sample:
+    """
+    Ein einzelner Messdatensatz.
+
+    t_s:
+        Zeit in Sekunden seit Messstart (für Plot/Anzeige).
+    data:
+        Dictionary pro Kanal: kanalnummer -> (statuscode, druckwert).
+    captured_at:
+        Absolute Erfassungszeit (Unix-Zeit), nützlich für CSV-Relativzeiten.
+    """
     t_s: float
     data: Dict[int, Tuple[int, float]]
     captured_at: float = 0.0
 
 
 class ScrollableFrame(ttk.Frame):
+    """Kleine GUI-Hilfsklasse für vertikal scrollbar eingebettete Inhalte."""
     def __init__(self, parent):
         super().__init__(parent)
         self.canvas = tk.Canvas(self, highlightthickness=0)
@@ -150,6 +201,14 @@ class ScrollableFrame(ttk.Frame):
 
 
 class SerialHelper:
+    """
+    Kapselt grundlegende RS-232-Protokollschritte.
+
+    Warum diese Klasse wichtig ist:
+    - Sie zentralisiert ACK/NAK-Handling.
+    - Sie reduziert duplizierten I/O-Code in den Geräte-Treibern.
+    - Fehlertexte werden an einer Stelle verständlich formuliert.
+    """
     def __init__(self, ser: serial.Serial) -> None:
         self.ser = ser
 
@@ -220,6 +279,7 @@ class SerialHelper:
         raise RuntimeError(f"Kein ACK erhalten. Antwort: {raw!r}")
 
     def request_response(self, cmd: str, timeout_s: float = 1.0) -> str:
+        """Sendet Lesebefehl und liefert die dekodierte Datenantwort zurück."""
         self.send_ascii(cmd)
         self.expect_ack(timeout_s=timeout_s)
         self.send_enq()
@@ -229,11 +289,18 @@ class SerialHelper:
         return data.decode("ascii", errors="ignore").strip()
 
     def write_only(self, cmd: str, timeout_s: float = 1.0) -> None:
+        """Sendet Schreibbefehl und erwartet nur ACK/NAK (keine Datenantwort)."""
         self.send_ascii(cmd)
         self.expect_ack(timeout_s=timeout_s)
 
 
 class BaseGaugeDriver:
+    """
+    Abstrakte Basisklasse für gerätespezifische Treiber.
+
+    Die GUI arbeitet gegen diese gemeinsame Schnittstelle. So kann dieselbe
+    Oberfläche mehrere Gerätetypen bedienen.
+    """
     name = "Gauge"
     channel_count = 0
 
@@ -256,6 +323,7 @@ class BaseGaugeDriver:
 
 
 class TPG262Driver(BaseGaugeDriver):
+    """Treiber für Pfeiffer TPG 262 (2 Kanäle)."""
     name = "TPG 262"
     channel_count = 2
 
@@ -286,6 +354,12 @@ class TPG262Driver(BaseGaugeDriver):
                 pass
 
     def read_sample(self, t_s: float) -> Optional[Sample]:
+        """
+        Liest einen Messzyklus.
+
+        - Im Langzeitmodus: gezielte PR1/PR2-Abfragen und explizites Sleep.
+        - Im Continuous Mode: erwartet laufende Datenzeilen vom Gerät.
+        """
         if self.long_term_seconds is not None:
             with self.io_lock:
                 self.sh.send_etx()
@@ -461,6 +535,7 @@ class TPG262Driver(BaseGaugeDriver):
 
 
 class MaxiGaugeDriver(BaseGaugeDriver):
+    """Treiber für Pfeiffer MaxiGauge/TPG 256 A (6 Kanäle)."""
     name = "MaxiGauge"
     channel_count = 6
 
@@ -494,6 +569,10 @@ class MaxiGaugeDriver(BaseGaugeDriver):
             return None
 
     def read_sample(self, t_s: float) -> Optional[Sample]:
+        """
+        Liest alle 6 Kanäle sequenziell aus und wartet anschließend das
+        eingestellte Polling-Intervall.
+        """
         d: Dict[int, Tuple[int, float]] = {}
         with self.io_lock:
             for ch in range(1, 7):
@@ -672,6 +751,13 @@ class MaxiGaugeDriver(BaseGaugeDriver):
 
 
 class PressureLoggerApp:
+    """
+    Hauptanwendung (GUI + Messablauf + Logging + Geräteaktionen).
+
+    Für Forschende ohne Programmierhintergrund:
+    - Diese Klasse ist der zentrale "Orchestrator":
+      Sie verbindet Buttons, Mess-Thread, CSV-Ausgabe und Plot.
+    """
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("CDT pressure logger")
@@ -740,6 +826,7 @@ class PressureLoggerApp:
         self.root.after(200, self._poll_queue)
 
     def _build_ui(self) -> None:
+        """Erzeugt sämtliche sichtbaren GUI-Elemente."""
         main = ttk.Panedwindow(self.root, orient="horizontal")
         main.pack(fill="both", expand=True)
 
@@ -965,10 +1052,12 @@ class PressureLoggerApp:
         self.lines = {}
         self._rebuild_lines()
     def _help_path(self, key: str) -> Path:
+        """Liefert den Dateipfad zur angeforderten Hilfedatei."""
         filename = HELP_FILENAMES[key]
         return Path(__file__).with_name(filename)
 
     def show_help_file(self, key: str, title: str) -> None:
+        """Öffnet ein separates Fenster und zeigt den Hilfetext an."""
         path = self._help_path(key)
         try:
             content = path.read_text(encoding="utf-8")
@@ -1008,6 +1097,7 @@ class PressureLoggerApp:
             canvas.itemconfigure(oval, fill=color)
 
     def _update_indicators(self) -> None:
+        """Aktualisiert die farbigen Verbindungs-/Mess-/Datei-Statuspunkte."""
         connected = self.ser is not None and self.ser.is_open
         self._set_indicator(self.conn_light, "#2e7d32" if connected else "#9e9e9e")
         self._set_indicator(self.meas_light, "#2e7d32" if self.running else "#9e9e9e")
@@ -1076,6 +1166,13 @@ class PressureLoggerApp:
         self._update_indicators()
 
     def _apply_device_profile(self) -> None:
+        """
+        Schaltet die Oberfläche dynamisch auf den gewählten Gerätetyp um.
+
+        Beispiel:
+        - TPG 262: 2 Messkanäle, Continuous-Intervalle.
+        - MaxiGauge: 6 Messkanäle + zusätzliche Anzeige-/Namensparameter.
+        """
         dev = self.device_var.get()
         self.root.title("CDT pressure logger")
         self.csv_path_var.set(make_default_csv_name(dev))
@@ -1150,6 +1247,7 @@ class PressureLoggerApp:
             self._sync_external_plot(full_rebuild=True)
 
     def _sync_external_plot(self, full_rebuild: bool = False) -> None:
+        """Synchronisiert das optionale zweite Plotfenster mit dem Hauptplot."""
         if self.external_plot_window is None or not self.external_plot_window.winfo_exists():
             return
 
@@ -1226,6 +1324,7 @@ class PressureLoggerApp:
         self._update_file_status_label()
 
     def connect(self) -> None:
+        """Öffnet serielle Verbindung und startet sofort das Monitoring."""
         self.disconnect()
         port = self.port_var.get().strip()
         if not port:
@@ -1269,6 +1368,7 @@ class PressureLoggerApp:
         self._update_indicators()
 
     def _open_csv(self) -> None:
+        """Erzeugt CSV-Datei, schreibt Kopfzeile gemäß Gerätetyp."""
         path = self.csv_path_var.get().strip()
         if not path:
             raise RuntimeError("Kein CSV-Pfad angegeben.")
@@ -1295,6 +1395,7 @@ class PressureLoggerApp:
         self._update_file_status_label()
 
     def _make_driver(self) -> BaseGaugeDriver:
+        """Factory-Methode: erstellt den passenden Gerätetreiber."""
         assert self.ser is not None and self.ser.is_open
         long_term_seconds = parse_seconds_label(self.long_term_seconds_var.get(), default=60.0) if self.long_term_var.get() else None
         if self.device_var.get() == "TPG 262":
@@ -1302,6 +1403,12 @@ class PressureLoggerApp:
         return MaxiGaugeDriver(self.ser, self.interval_var.get(), long_term_seconds=long_term_seconds)
 
     def start_monitoring(self, preserve_time: bool = False) -> None:
+        """
+        Startet den Hintergrundleseprozess.
+
+        preserve_time=True wird genutzt, wenn nach Gerätekommandos ein
+        laufender Messbetrieb mit konsistenter Zeitachse fortgesetzt werden soll.
+        """
         if self.running:
             self.status_measurement_var.set("Logging läuft" if self.logging_enabled else "Monitoring läuft")
             self._update_indicators()
@@ -1432,6 +1539,12 @@ class PressureLoggerApp:
                 self._set_channel_lights(ch, 6)
 
     def _reader_loop(self) -> None:
+        """
+        Läuft im Hintergrundthread:
+        - liest Samples vom Gerät,
+        - versieht sie mit Zeitinformation,
+        - legt sie in die Queue für den GUI-Thread.
+        """
         assert self.driver is not None
         while self.running:
             try:
@@ -1446,6 +1559,7 @@ class PressureLoggerApp:
                 break
 
     def _write_csv_row(self, sample: Sample) -> None:
+        """Schreibt genau eine Messzeile in die CSV-Datei."""
         if self.csv_writer is None or not self.logging_enabled:
             return
         if self.log_start_time is not None and sample.captured_at:
@@ -1494,6 +1608,14 @@ class PressureLoggerApp:
         return None
 
     def _status_plot_value(self, ch: int, status: int, value: float) -> float:
+        """
+        Erzeugt einen robusten Plotwert auch für Statusfälle.
+
+        Warum?
+        - Logarithmische Achsen können keine <=0 Werte darstellen.
+        - Bei over/underrange wird ein sinnvoller Ersatzwert verwendet,
+          damit Trends im Plot visuell nachvollziehbar bleiben.
+        """
         if status in (5, 6):
             return float("nan")
         if value == value and value > 0:
@@ -1525,6 +1647,11 @@ class PressureLoggerApp:
         self._sync_external_plot(full_rebuild=False)
 
     def _poll_queue(self) -> None:
+        """
+        Regelmäßiger GUI-Timer:
+        Übernimmt neue Messdaten aus der Queue und aktualisiert Anzeige, Plot
+        und CSV (thread-sicher im GUI-Kontext).
+        """
         try:
             while True:
                 kind, payload = self.queue.get_nowait()
@@ -1555,6 +1682,16 @@ class PressureLoggerApp:
         return self.driver
 
     def _run_device_action(self, action: Callable[[BaseGaugeDriver], Optional[str]], restart_after: bool = True) -> None:
+        """
+        Führt einen Gerätebefehl kontrolliert aus.
+
+        Designziel:
+        - Wenn gerade gemessen wird, wird Monitoring kurz pausiert.
+        - Befehl wird mit passendem Treiber ausgeführt.
+        - Monitoring wird danach wieder aufgenommen.
+
+        So werden Kollisionen zwischen Dauermessung und Einzelkommandos reduziert.
+        """
         was_running = self.running
         was_logging = self.logging_enabled
         command_driver: Optional[BaseGaugeDriver] = None
@@ -1701,6 +1838,13 @@ class PressureLoggerApp:
         self._run_device_action(action)
 
     def send_raw_command(self) -> None:
+        """
+        Expertenmodus für direkte Protokollbefehle.
+
+        Konvention:
+        - Mit führendem '!' wird nur ACK erwartet (write-only).
+        - Ohne '!' wird eine Datenantwort abgefragt.
+        """
         cmd = self.raw_command_var.get().strip()
         if not cmd:
             return
@@ -1858,6 +2002,7 @@ class PressureLoggerApp:
             self.log_msg(f"[ERR] CSV-Plot fehlgeschlagen: {exc}")
 
 def main() -> None:
+    """Programmstartpunkt."""
     root = tk.Tk()
     PressureLoggerApp(root)
     root.mainloop()
