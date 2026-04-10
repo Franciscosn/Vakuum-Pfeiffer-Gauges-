@@ -142,8 +142,8 @@ Empfohlene Diagnose-Reihenfolge bei Problemen eines Kanals:
 4. Fehlerstatus prüfen (`ERR`, relevant v. a. bei TPG 262)
 5. ggf. Fehler quittieren (`RES,1`) und erneut prüfen
 
- Zusätzliche Hintergrundinformationen sind im Ordner `texts/` enthalten
-(z. B. `texts/rohkommandos_pfeiffer_vollstaendig.txt`, `texts/diagnose_lesen_hilfe_vollstaendig.txt`).
+Zusätzliche Hintergrundinformationen sind in den deutschsprachigen Hilfedateien enthalten
+(z. B. `rohkommandos_pfeiffer_vollstaendig.txt`, `diagnose_lesen_hilfe_vollstaendig.txt`).
 
 ---
 
@@ -244,14 +244,13 @@ Die Nutzung erfolgt auf eigene Verantwortung.
 .
 ├── cdt_pressure_logger_v9.py
 ├── README.md
-├── texts/
-│   ├── rohkommandos_pfeiffer_vollstaendig.txt
-│   ├── diagnose_lesen_hilfe_vollstaendig.txt
-│   └── hilfe_*.txt
+├── rohkommandos_pfeiffer_vollstaendig.txt
+├── diagnose_lesen_hilfe_vollstaendig.txt
+└── hilfe_*.txt
 ```
 
 - `cdt_pressure_logger_v9.py`: Hauptanwendung (GUI + Treiber + Logging)
-- `texts/hilfe_*.txt`: kontextbezogene Hilfe in der Oberfläche
+- `hilfe_*.txt`: kontextbezogene Hilfe in der Oberfläche
 
 ---
 
