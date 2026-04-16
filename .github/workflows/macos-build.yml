@@ -1,0 +1,40 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - ".github/workflows/macos-build.yml"
+      - "apps/shared/**"
+      - "apps/macos/**"
+      - "src/**"
+      - "Run CDT Pressure Logger.command"
+      - "README.md"
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build native app bundle
+        run: |
+          chmod +x "apps/macos/build_macos_app.sh"
+          ./apps/macos/build_macos_app.sh
+
+      - name: Archive app bundle
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "build/macos/CDT Pressure Logger.app" "dist/CDT-Pressure-Logger-macOS.zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: CDTPressureLogger-macOS
+          path: dist/CDT-Pressure-Logger-macOS.zip
+          if-no-files-found: error

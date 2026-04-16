@@ -1,0 +1,78 @@
+name: Build Windows App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - ".github/workflows/windows-build.yml"
+      - "apps/shared/**"
+      - "apps/windows/**"
+      - "src/**"
+      - "windows/VisualStudio/**"
+      - "Run CDT Pressure Logger.bat"
+      - "README.md"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Locate MSBuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (!(Test-Path $vswhere)) {
+            throw "vswhere.exe was not found."
+          }
+
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($msbuild)) {
+            throw "MSBuild.exe was not found."
+          }
+
+          "MSBUILD_PATH=$msbuild" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Using MSBuild at: $msbuild"
+
+      - name: Build x64 Release
+        shell: pwsh
+        run: |
+          & "$env:MSBUILD_PATH" "windows\VisualStudio\CDTPressureLoggerWin.sln" `
+            /m `
+            /t:Build `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /verbosity:minimal `
+            /bl:"windows\VisualStudio\build\CDTPressureLoggerWin.binlog"
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: CDTPressureLoggerWin-build-log
+          path: windows/VisualStudio/build/CDTPressureLoggerWin.binlog
+          if-no-files-found: warn
+
+      - name: Assemble distributable package
+        shell: pwsh
+        run: |
+          $distDir = "dist\CDTPressureLoggerWin-x64-Release"
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+          Copy-Item "windows\VisualStudio\build\x64\Release\CDTPressureLoggerWin.exe" "$distDir\CDTPressureLoggerWin.exe"
+          Copy-Item "Run CDT Pressure Logger.bat" "$distDir\Run CDT Pressure Logger.bat"
+          Copy-Item "README.md" "$distDir\README.md"
+          Compress-Archive -Path "$distDir\*" -DestinationPath "dist\CDTPressureLoggerWin-x64-Release.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: CDTPressureLoggerWin-x64-Release
+          path: dist/CDTPressureLoggerWin-x64-Release.zip
+          if-no-files-found: error
