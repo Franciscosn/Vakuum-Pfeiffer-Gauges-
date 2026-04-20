@@ -19,9 +19,9 @@
 
 
 #import <Cocoa/Cocoa.h>
-
 #include "PressureLoggerAppEngine.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -149,6 +149,9 @@ namespace
 	NSTextField *_titleLabel;
 	NSTextField *_valueLabel;
 	NSTextField *_statusLabel;
+	NSTextField *_okLabel;
+	NSTextField *_offLabel;
+	NSTextField *_orLabel;
 	PressureIndicatorView *_okIndicator;
 	PressureIndicatorView *_offIndicator;
 	PressureIndicatorView *_orIndicator;
@@ -218,9 +221,41 @@ namespace
 			[label setFont:_MainFont()];
 			[label setStringValue:labels[i]];
 			[content addSubview:label];
+			if ( i == 0 ) _okLabel = label;
+			else if ( i == 1 ) _offLabel = label;
+			else _orLabel = label;
 		}
 	}
 	return self;
+}
+
+
+- (void)layout
+{
+	[super layout];
+
+	NSRect bounds = [self bounds];
+	const CGFloat width = bounds.size.width;
+	const CGFloat height = bounds.size.height;
+
+	[_titleLabel setFrame:NSMakeRect( 16, height - 34, width - 32, 20 )];
+	[_valueLabel setFrame:NSMakeRect( 16, height - 86, width - 32, 34 )];
+	[_statusLabel setFrame:NSMakeRect( 16, height - 118, width - 32, 22 )];
+
+	[_okIndicator setFrame:NSMakeRect( width - 104, 18, 18, 18 )];
+	[_offIndicator setFrame:NSMakeRect( width - 58, 18, 18, 18 )];
+	[_orIndicator setFrame:NSMakeRect( width - 14, 18, 18, 18 )];
+
+	[_okLabel setFrame:NSMakeRect( width - 130, 14, 24, 22 )];
+	[_offLabel setFrame:NSMakeRect( width - 88, 14, 28, 22 )];
+	[_orLabel setFrame:NSMakeRect( width - 42, 14, 24, 22 )];
+}
+
+
+- (void)setFrameSize:(NSSize)newSize
+{
+	[super setFrameSize:newSize];
+	[self layout];
 }
 
 
@@ -256,6 +291,9 @@ namespace
 
 @interface PressurePlotView : NSView
 - (void)updateWithSnapshot:(const PressureLoggerStateSnapshot &)snapshot engine:(CPressureLoggerAppEngine *)engine visibleChannels:(const bool *)visibleChannels channelCount:(NSInteger)channelCount;
+- (void)resetZoom;
+- (void)zoomIn;
+- (void)zoomOut;
 @end
 
 
@@ -265,6 +303,16 @@ namespace
 	CPressureLoggerAppEngine *_engine;
 	bool _visibleChannels[6];
 	NSInteger _channelCount;
+	BOOL _hasManualViewport;
+	double _manualXMin;
+	double _manualXMax;
+	double _manualYMin;
+	double _manualYMax;
+	double _autoXMin;
+	double _autoXMax;
+	double _autoYMin;
+	double _autoYMax;
+	NSRect _lastPlotRect;
 }
 
 
@@ -276,6 +324,11 @@ namespace
 		for ( int i = 0; i < 6; i++ )
 			_visibleChannels[i] = (i < 2);
 		_channelCount = 2;
+		_hasManualViewport = NO;
+		_autoXMin = -0.05;
+		_autoXMax = 0.05;
+		_autoYMin = 1.0;
+		_autoYMax = 10.0;
 		[self setWantsLayer:YES];
 	}
 	return self;
@@ -293,6 +346,110 @@ namespace
 }
 
 
+- (BOOL)isFlipped
+{
+	return NO;
+}
+
+
+- (BOOL)acceptsFirstResponder
+{
+	return YES;
+}
+
+
+- (void)resetZoom
+{
+	_hasManualViewport = NO;
+	[self setNeedsDisplay:YES];
+}
+
+
+- (void)zoomIn
+{
+	[self zoomAroundNormalizedX:0.5 normalizedY:0.5 factor:0.78];
+}
+
+
+- (void)zoomOut
+{
+	[self zoomAroundNormalizedX:0.5 normalizedY:0.5 factor:1.28];
+}
+
+
+- (void)zoomAroundNormalizedX:(double)normalizedX normalizedY:(double)normalizedY factor:(double)factor
+{
+	const double xMin = _hasManualViewport ? _manualXMin : _autoXMin;
+	const double xMax = _hasManualViewport ? _manualXMax : _autoXMax;
+	const double yMin = _hasManualViewport ? _manualYMin : _autoYMin;
+	const double yMax = _hasManualViewport ? _manualYMax : _autoYMax;
+	if ( !(xMax > xMin) || !(yMax > yMin) )
+		return;
+
+	const double clampedX = std::max( 0.0, std::min( 1.0, normalizedX ) );
+	const double clampedY = std::max( 0.0, std::min( 1.0, normalizedY ) );
+	const double anchorX = xMin + (xMax - xMin) * clampedX;
+	const double newXMin = anchorX - (anchorX - xMin) * factor;
+	const double newXMax = anchorX + (xMax - anchorX) * factor;
+	if ( (newXMax - newXMin) < 1e-6 )
+		return;
+
+	const double logYMin = log10( std::max( yMin, 1e-12 ) );
+	const double logYMax = log10( std::max( yMax, yMin * 1.01 ) );
+	const double anchorLogY = logYMin + (logYMax - logYMin) * clampedY;
+	const double newLogYMin = anchorLogY - (anchorLogY - logYMin) * factor;
+	const double newLogYMax = anchorLogY + (logYMax - anchorLogY) * factor;
+	if ( (newLogYMax - newLogYMin) < 0.05 )
+		return;
+
+	_manualXMin = newXMin;
+	_manualXMax = newXMax;
+	_manualYMin = pow( 10.0, newLogYMin );
+	_manualYMax = pow( 10.0, newLogYMax );
+	_hasManualViewport = YES;
+	[self setNeedsDisplay:YES];
+}
+
+
+- (void)scrollWheel:(NSEvent *)event
+{
+	const NSPoint localPoint = [self convertPoint:[event locationInWindow] fromView:nil];
+	if ( !NSPointInRect( localPoint, _lastPlotRect ) )
+	{
+		[super scrollWheel:event];
+		return;
+	}
+
+	const double delta = [event hasPreciseScrollingDeltas] ? [event scrollingDeltaY] : [event deltaY];
+	if ( fabs( delta ) < 0.01 )
+		return;
+
+	const double normalizedX = (localPoint.x - _lastPlotRect.origin.x) / _lastPlotRect.size.width;
+	const double normalizedY = (localPoint.y - _lastPlotRect.origin.y) / _lastPlotRect.size.height;
+	const double factor = (delta > 0.0) ? 0.88 : 1.14;
+	[self zoomAroundNormalizedX:normalizedX normalizedY:normalizedY factor:factor];
+}
+
+
+- (void)magnifyWithEvent:(NSEvent *)event
+{
+	double factor = 1.0 - [event magnification];
+	factor = std::max( 0.65, std::min( 1.35, factor ) );
+	[self zoomAroundNormalizedX:0.5 normalizedY:0.5 factor:factor];
+}
+
+
+- (void)mouseDown:(NSEvent *)event
+{
+	if ( [event clickCount] >= 2 )
+	{
+		[self resetZoom];
+		return;
+	}
+	[super mouseDown:event];
+}
+
+
 - (void)drawRect:(NSRect)dirtyRect
 {
 	(void) dirtyRect;
@@ -306,6 +463,7 @@ namespace
 	const CGFloat top = 28.0;
 	const CGFloat bottom = 70.0;
 	NSRect plotRect = NSMakeRect( left, bottom, bounds.size.width - left - right, bounds.size.height - top - bottom );
+	_lastPlotRect = plotRect;
 
 	[[NSColor colorWithCalibratedWhite:0.20 alpha:1.0] setStroke];
 	NSBezierPath *border = [NSBezierPath bezierPathWithRect:plotRect];
@@ -370,6 +528,23 @@ namespace
 		yMax = pow( 10.0, std::max( logMax, logMin + 1.0 ) );
 	}
 
+	_autoXMin = xMin;
+	_autoXMax = xMax;
+	_autoYMin = yMin;
+	_autoYMax = yMax;
+	if ( !_hasManualViewport )
+	{
+		_manualXMin = xMin;
+		_manualXMax = xMax;
+		_manualYMin = yMin;
+		_manualYMax = yMax;
+	}
+
+	const double viewXMin = _hasManualViewport ? _manualXMin : _autoXMin;
+	const double viewXMax = _hasManualViewport ? _manualXMax : _autoXMax;
+	const double viewYMin = _hasManualViewport ? _manualYMin : _autoYMin;
+	const double viewYMax = _hasManualViewport ? _manualYMax : _autoYMax;
+
 	[[NSColor colorWithCalibratedWhite:0.80 alpha:1.0] setStroke];
 	for ( int i = 0; i <= 5; i++ )
 	{
@@ -382,7 +557,7 @@ namespace
 
 	for ( int i = 0; i <= 4; i++ )
 	{
-		const double logValue = log10( yMin ) + (log10( yMax ) - log10( yMin )) * static_cast<double>( i ) / 4.0;
+		const double logValue = log10( viewYMin ) + (log10( viewYMax ) - log10( viewYMin )) * static_cast<double>( i ) / 4.0;
 		const CGFloat y = plotRect.origin.y + plotRect.size.height * static_cast<CGFloat>( i ) / 4.0;
 		NSBezierPath *horizontal = [NSBezierPath bezierPath];
 		[horizontal moveToPoint:NSMakePoint( plotRect.origin.x, y )];
@@ -430,8 +605,14 @@ namespace
 				continue;
 			}
 
-			const CGFloat x = plotRect.origin.x + static_cast<CGFloat>( (times[i] - xMin) / (xMax - xMin) ) * plotRect.size.width;
-			const double normalizedY = (log10( value ) - log10( yMin )) / (log10( yMax ) - log10( yMin ));
+			if ( (times[i] < viewXMin) || (times[i] > viewXMax) || (value < viewYMin) || (value > viewYMax) )
+			{
+				pathStarted = false;
+				continue;
+			}
+
+			const CGFloat x = plotRect.origin.x + static_cast<CGFloat>( (times[i] - viewXMin) / (viewXMax - viewXMin) ) * plotRect.size.width;
+			const double normalizedY = (log10( value ) - log10( viewYMin )) / (log10( viewYMax ) - log10( viewYMin ));
 			const CGFloat y = plotRect.origin.y + static_cast<CGFloat>( normalizedY ) * plotRect.size.height;
 			if ( !pathStarted )
 			{
@@ -446,7 +627,12 @@ namespace
 		[path stroke];
 	}
 
-	NSRect legendRect = NSMakeRect( plotRect.origin.x + plotRect.size.width - 250, plotRect.origin.y + plotRect.size.height - 70, 230, 52 + 20 * _channelCount );
+	NSInteger visibleCount = 0;
+	for ( NSInteger channel = 1; channel <= _channelCount; channel++ )
+		if ( _visibleChannels[channel - 1] )
+			visibleCount++;
+
+	NSRect legendRect = NSMakeRect( plotRect.origin.x + plotRect.size.width - 250, plotRect.origin.y + plotRect.size.height - 22.0 - 24.0 * std::max<NSInteger>( visibleCount, 1 ), 230, 18.0 + 24.0 * std::max<NSInteger>( visibleCount, 1 ) );
 	[[NSColor colorWithCalibratedWhite:1.0 alpha:0.95] setFill];
 	[[NSBezierPath bezierPathWithRoundedRect:legendRect xRadius:6 yRadius:6] fill];
 	[[NSColor colorWithCalibratedWhite:0.85 alpha:1.0] setStroke];
@@ -471,12 +657,32 @@ namespace
 		[label drawAtPoint:NSMakePoint( legendRect.origin.x + 54, legendY ) withAttributes:@{NSFontAttributeName:_MainFont()}];
 		legendY -= 22;
 	}
+
+	if ( _hasManualViewport )
+	{
+		NSString *zoomBadge = @"Zoom aktiv";
+		NSDictionary *attributes = @{ NSFontAttributeName : _SmallBoldFont(),
+									  NSForegroundColorAttributeName : [NSColor colorWithCalibratedWhite:0.18 alpha:1.0] };
+		[zoomBadge drawAtPoint:NSMakePoint( plotRect.origin.x + 10, plotRect.origin.y + plotRect.size.height - 22 ) withAttributes:attributes];
+	}
 }
 
 @end
 
 
-@interface CDTPressureLoggerDelegate : NSObject <NSApplicationDelegate>
+@interface PressureFlippedView : NSView
+@end
+
+
+@implementation PressureFlippedView
+- (BOOL)isFlipped
+{
+	return YES;
+}
+@end
+
+
+@interface CDTPressureLoggerDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
 @end
 
 
@@ -485,6 +691,14 @@ namespace
 	NSWindow *_window;
 	NSScrollView *_leftScrollView;
 	NSView *_leftContentView;
+	NSView *_rightView;
+	NSBox *_connectionBox;
+	NSBox *_rawBox;
+	NSView *_plotFooterView;
+	NSTextField *_plotSelectionLabel;
+	NSTextField *_messagesLabel;
+	NSButton *_renameChannelsButton;
+	NSButton *_debugInfoButton;
 
 	NSPopUpButton *_devicePopup;
 	NSPopUpButton *_portPopup;
@@ -494,6 +708,7 @@ namespace
 	NSTextField *_measurementStatusLabel;
 	NSTextField *_samplesStatusLabel;
 	NSTextField *_fileStatusLabel;
+	NSTextField *_intervalTitleLabel;
 	NSPopUpButton *_intervalPopup;
 	NSButton *_longTermCheck;
 	NSTextField *_longTermField;
@@ -514,12 +729,22 @@ namespace
 	NSTextField *_calibrationField;
 	NSPopUpButton *_fsrPopup;
 	NSPopUpButton *_ofcPopup;
+	NSTextField *_channelNameField;
+	NSTextField *_displayNameLabel;
 	NSTextField *_displayNameField;
+	NSButton *_displayNameButton;
 	NSPopUpButton *_digitsPopup;
 	NSTextField *_contrastField;
 	NSTextField *_screensaveField;
+	NSArray<NSView *> *_maxiOnlyViews;
 
 	PressurePlotView *_plotView;
+	NSButton *_plotHomeButton;
+	NSButton *_plotZoomOutButton;
+	NSButton *_plotZoomInButton;
+	NSButton *_clearPlotButton;
+	NSButton *_externalPlotButton;
+	NSButton *_plotCsvButton;
 	NSWindow *_externalPlotWindow;
 	PressurePlotView *_externalPlotView;
 	NSWindow *_csvPlotWindow;
@@ -591,6 +816,9 @@ namespace
 	[box setCornerRadius:8.0];
 	[box setFillColor:[NSColor colorWithCalibratedWhite:0.98 alpha:1.0]];
 	[box setTitleFont:[NSFont fontWithName:@"Avenir Next Demi Bold" size:15.0] ?: [NSFont boldSystemFontOfSize:15.0]];
+	PressureFlippedView *contentView = [[PressureFlippedView alloc] initWithFrame:[[box contentView] frame]];
+	[contentView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+	[box setContentView:contentView];
 	[view addSubview:box];
 	return box;
 }
@@ -644,6 +872,16 @@ namespace
 }
 
 
+- (NSButton *)createInfoButton:(NSRect)frame key:(NSString *)key title:(NSString *)title inView:(NSView *)view
+{
+	NSButton *button = [self createButton:frame title:@"i" target:self action:@selector(showHelpAction:) inView:view];
+	[button setFont:_MainFont()];
+	[button setIdentifier:key];
+	[button setToolTip:title];
+	return button;
+}
+
+
 - (NSButton *)createCheckbox:(NSRect)frame title:(NSString *)title target:(id)target action:(SEL)action inView:(NSView *)view
 {
 	NSButton *button = [[NSButton alloc] initWithFrame:frame];
@@ -676,7 +914,7 @@ namespace
 
 - (void)buildWindow
 {
-	NSRect frame = NSMakeRect( 0, 0, 1780, 980 );
+	NSRect frame = NSMakeRect( 0, 0, 1700, 980 );
 	_window = [[NSWindow alloc] initWithContentRect:frame
 										  styleMask:(NSWindowStyleMaskTitled |
 													 NSWindowStyleMaskClosable |
@@ -687,150 +925,187 @@ namespace
 	[_window setTitle:@"CDT pressure logger"];
 	[_window setBackgroundColor:[NSColor whiteColor]];
 	[_window center];
+	[_window setDelegate:self];
 
 	NSView *contentView = [_window contentView];
 
-	_leftScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect( 0, 0, 840, frame.size.height )];
+	_leftScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect( 0, 0, 770, frame.size.height )];
+	[_leftScrollView setAutoresizingMask:NSViewHeightSizable];
 	[_leftScrollView setHasVerticalScroller:YES];
 	[_leftScrollView setBorderType:NSNoBorder];
-	_leftContentView = [[NSView alloc] initWithFrame:NSMakeRect( 0, 0, 830, 1240 )];
+	_leftContentView = [[PressureFlippedView alloc] initWithFrame:NSMakeRect( 0, 0, 760, 1120 )];
 	[_leftScrollView setDocumentView:_leftContentView];
 	[contentView addSubview:_leftScrollView];
 
-	NSView *rightView = [[NSView alloc] initWithFrame:NSMakeRect( 850, 0, frame.size.width - 850, frame.size.height )];
-	[rightView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-	[contentView addSubview:rightView];
+	_rightView = [[PressureFlippedView alloc] initWithFrame:NSMakeRect( 780, 0, frame.size.width - 780, frame.size.height )];
+	[_rightView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+	[contentView addSubview:_rightView];
 
-	[self createLabel:NSMakeRect( 16, 1175, 340, 34 ) text:@"CDT pressure logger" inView:_leftContentView bold:YES];
+	[self createLabel:NSMakeRect( 16, 12, 340, 34 ) text:@"CDT pressure logger" inView:_leftContentView bold:YES];
 
-	NSBox *connectionBox = [self createSectionBox:NSMakeRect( 10, 990, 810, 180 ) title:@"Verbindung / Messung / Status" inView:_leftContentView];
-	NSView *connectionView = [connectionBox contentView];
+	_connectionBox = [self createSectionBox:NSMakeRect( 10, 56, 740, 304 ) title:@"Verbindung / Messung / Status" inView:_leftContentView];
+	NSView *connectionView = [_connectionBox contentView];
 
-	[self createLabel:NSMakeRect( 16, 116, 48, 24 ) text:@"Gerät:" inView:connectionView bold:NO];
-	_connectionIndicator = [[PressureIndicatorView alloc] initWithFrame:NSMakeRect( 218, 116, 18, 18 )];
+	[self createLabel:NSMakeRect( 16, 12, 48, 24 ) text:@"Gerät:" inView:connectionView bold:NO];
+	_connectionIndicator = [[PressureIndicatorView alloc] initWithFrame:NSMakeRect( 210, 12, 18, 18 )];
 	[connectionView addSubview:_connectionIndicator];
-	_devicePopup = [self createPopup:NSMakeRect( 280, 110, 230, 28 ) titles:@[@"TPG 262", @"MaxiGauge"] inView:connectionView];
+	_devicePopup = [self createPopup:NSMakeRect( 260, 8, 210, 28 ) titles:@[@"TPG 262", @"MaxiGauge"] inView:connectionView];
 	[_devicePopup setTarget:self];
 	[_devicePopup setAction:@selector(deviceChanged:)];
-	[self createLabel:NSMakeRect( 530, 116, 35, 24 ) text:@"Port" inView:connectionView bold:NO];
-	_portPopup = [self createPopup:NSMakeRect( 575, 110, 200, 28 ) titles:@[@""] inView:connectionView];
+	[self createLabel:NSMakeRect( 500, 12, 35, 24 ) text:@"Port" inView:connectionView bold:NO];
+	_portPopup = [self createPopup:NSMakeRect( 546, 8, 172, 28 ) titles:@[@""] inView:connectionView];
 	[_portPopup setTarget:self];
 	[_portPopup setAction:@selector(selectionChanged:)];
 
-	[self createButton:NSMakeRect( 16, 72, 195, 30 ) title:@"Verbinden" target:self action:@selector(connectAction:) inView:connectionView];
-	[self createButton:NSMakeRect( 220, 72, 56, 30 ) title:@"Neu + Start" target:self action:@selector(startNewMeasurementAction:) inView:connectionView];
-	[self createButton:NSMakeRect( 280, 72, 240, 30 ) title:@"Aktualisieren" target:self action:@selector(refreshPorts:) inView:connectionView];
-	[self createButton:NSMakeRect( 565, 72, 195, 30 ) title:@"Werkreset" target:self action:@selector(factoryResetAction:) inView:connectionView];
+	[self createButton:NSMakeRect( 16, 46, 118, 30 ) title:@"Verbinden" target:self action:@selector(connectAction:) inView:connectionView];
+	[self createButton:NSMakeRect( 142, 46, 118, 30 ) title:@"Trennen" target:self action:@selector(disconnectAction:) inView:connectionView];
+	[self createButton:NSMakeRect( 268, 46, 126, 30 ) title:@"Aktualisieren" target:self action:@selector(refreshPorts:) inView:connectionView];
+	[self createButton:NSMakeRect( 402, 46, 118, 30 ) title:@"Diagnose" target:self action:@selector(diagnoseAction:) inView:connectionView];
+	[self createButton:NSMakeRect( 528, 46, 118, 30 ) title:@"Werkreset" target:self action:@selector(factoryResetAction:) inView:connectionView];
 
-	[self createLabel:NSMakeRect( 16, 34, 68, 24 ) text:@"Messung:" inView:connectionView bold:NO];
-	_measurementIndicator = [[PressureIndicatorView alloc] initWithFrame:NSMakeRect( 218, 34, 18, 18 )];
+	[self createLabel:NSMakeRect( 16, 82, 68, 24 ) text:@"Messung:" inView:connectionView bold:NO];
+	_measurementIndicator = [[PressureIndicatorView alloc] initWithFrame:NSMakeRect( 210, 82, 18, 18 )];
 	[connectionView addSubview:_measurementIndicator];
-	_measurementStatusLabel = [self createLabel:NSMakeRect( 280, 34, 220, 24 ) text:@"Nicht verbunden" inView:connectionView bold:NO];
-	_samplesStatusLabel = [self createLabel:NSMakeRect( 530, 34, 140, 24 ) text:@"Sam 0" inView:connectionView bold:NO];
+	_measurementStatusLabel = [self createLabel:NSMakeRect( 260, 82, 220, 24 ) text:@"Nicht verbunden" inView:connectionView bold:NO];
+	_samplesStatusLabel = [self createLabel:NSMakeRect( 500, 82, 140, 24 ) text:@"Sam 0" inView:connectionView bold:NO];
 
-	[self createButton:NSMakeRect( 16, 0, 195, 30 ) title:@"Logging starten" target:self action:@selector(startLoggingAction:) inView:connectionView];
-	[self createButton:NSMakeRect( 220, 0, 56, 30 ) title:@"|" target:self action:@selector(stopLoggingAction:) inView:connectionView];
-	[self createButton:NSMakeRect( 280, 0, 240, 30 ) title:@"Logging stoppen" target:self action:@selector(stopLoggingAction:) inView:connectionView];
-	_liveOnlyCheck = [self createCheckbox:NSMakeRect( 530, 0, 260, 26 ) title:@"nur live anzeigen, nicht speichern" target:self action:@selector(refreshUi:) inView:connectionView];
+	[self createButton:NSMakeRect( 16, 118, 140, 30 ) title:@"Logging starten" target:self action:@selector(startLoggingAction:) inView:connectionView];
+	[self createButton:NSMakeRect( 164, 118, 162, 30 ) title:@"Neue Datei + Start" target:self action:@selector(startNewMeasurementAction:) inView:connectionView];
+	[self createButton:NSMakeRect( 334, 118, 146, 30 ) title:@"Logging stoppen" target:self action:@selector(stopLoggingAction:) inView:connectionView];
+	_liveOnlyCheck = [self createCheckbox:NSMakeRect( 490, 120, 236, 26 ) title:@"nur live anzeigen, nicht speichern" target:self action:@selector(refreshUi:) inView:connectionView];
 
-	[self createLabel:NSMakeRect( 16, -38, 150, 24 ) text:@"Continuous Mode" inView:connectionView bold:NO];
-	_intervalPopup = [self createPopup:NSMakeRect( 220, -42, 110, 28 ) titles:@[@"1 s"] inView:connectionView];
-	_longTermCheck = [self createCheckbox:NSMakeRect( 340, -40, 140, 26 ) title:@"Langzeitmodus" target:self action:@selector(deviceChanged:) inView:connectionView];
-	_longTermField = [self createField:NSMakeRect( 530, -42, 54, 28 ) text:@"60" inView:connectionView];
-	[self createLabel:NSMakeRect( 590, -38, 150, 24 ) text:@"s (Standard 60)" inView:connectionView bold:NO];
+	_intervalTitleLabel = [self createLabel:NSMakeRect( 16, 154, 136, 24 ) text:@"Continuous Mode" inView:connectionView bold:NO];
+	_intervalPopup = [self createPopup:NSMakeRect( 164, 150, 100, 28 ) titles:@[@"1 s"] inView:connectionView];
+	_longTermCheck = [self createCheckbox:NSMakeRect( 274, 152, 130, 26 ) title:@"Langzeitmodus" target:self action:@selector(deviceChanged:) inView:connectionView];
+	_longTermField = [self createField:NSMakeRect( 462, 150, 56, 28 ) text:@"60" inView:connectionView];
+	[self createLabel:NSMakeRect( 526, 154, 118, 24 ) text:@"s (Standard 60)" inView:connectionView bold:NO];
 
-	[self createLabel:NSMakeRect( 16, -76, 36, 24 ) text:@"CSV" inView:connectionView bold:NO];
-	_csvField = [self createField:NSMakeRect( 220, -80, 545, 28 ) text:@"" inView:connectionView];
-	[self createButton:NSMakeRect( 772, -80, 24, 28 ) title:@"…" target:self action:@selector(chooseCsvPathAction:) inView:connectionView];
+	[self createLabel:NSMakeRect( 16, 190, 36, 24 ) text:@"CSV" inView:connectionView bold:NO];
+	_csvField = [self createField:NSMakeRect( 56, 186, 626, 28 ) text:@"" inView:connectionView];
+	[self createButton:NSMakeRect( 690, 186, 30, 28 ) title:@"…" target:self action:@selector(chooseCsvPathAction:) inView:connectionView];
 
-	[self createButton:NSMakeRect( 16, -118, 195, 30 ) title:@"Durchsuchen" target:self action:@selector(chooseCsvPathAction:) inView:connectionView];
-	_fileIndicator = [[PressureIndicatorView alloc] initWithFrame:NSMakeRect( 218, -114, 18, 18 )];
+	[self createButton:NSMakeRect( 16, 226, 118, 30 ) title:@"Durchsuchen" target:self action:@selector(chooseCsvPathAction:) inView:connectionView];
+	_fileIndicator = [[PressureIndicatorView alloc] initWithFrame:NSMakeRect( 142, 232, 18, 18 )];
 	[connectionView addSubview:_fileIndicator];
-	_fileStatusLabel = [self createLabel:NSMakeRect( 470, -112, 320, 24 ) text:@"Datei: Keine Datei offen" inView:connectionView bold:NO];
+	_fileStatusLabel = [self createLabel:NSMakeRect( 174, 228, 540, 24 ) text:@"Datei: Keine Datei offen" inView:connectionView bold:NO];
+	[_fileStatusLabel setLineBreakMode:NSLineBreakByTruncatingMiddle];
 
-	CGFloat cardsTop = 790;
 	for ( int i = 0; i < 6; i++ )
 	{
-		const int row = i / 2;
-		const int col = i % 2;
-		_channelCards[i] = [[PressureChannelCardView alloc] initWithFrame:NSMakeRect( 12 + col * 408, cardsTop - row * 164, 396, 150 )];
+		_channelCards[i] = [[PressureChannelCardView alloc] initWithFrame:NSMakeRect( 10, 400, 360, 128 )];
 		[_leftContentView addSubview:_channelCards[i]];
 	}
 
-	[self createLabel:NSMakeRect( 16, 300, 110, 24 ) text:@"Im Plot anzeigen:" inView:_leftContentView bold:NO];
+	_plotSelectionLabel = [self createLabel:NSMakeRect( 16, 0, 120, 24 ) text:@"Im Plot anzeigen:" inView:_leftContentView bold:NO];
 	for ( int i = 0; i < 6; i++ )
 	{
-		_plotChecks[i] = [self createCheckbox:NSMakeRect( 145 + i * 44, 300, 42, 24 ) title:[NSString stringWithFormat:@"%d", i + 1] target:self action:@selector(plotVisibilityChanged:) inView:_leftContentView];
+		_plotChecks[i] = [self createCheckbox:NSMakeRect( 145 + i * 44, 0, 42, 24 ) title:[NSString stringWithFormat:@"%d", i + 1] target:self action:@selector(plotVisibilityChanged:) inView:_leftContentView];
 		[_plotChecks[i] setState:(i < 2) ? NSControlStateValueOn : NSControlStateValueOff];
 	}
+	_renameChannelsButton = [self createButton:NSMakeRect( 430, 0, 132, 28 ) title:@"Kanalnamen..." target:self action:@selector(editChannelNamesAction:) inView:_leftContentView];
+	_debugInfoButton = [self createButton:NSMakeRect( 572, 0, 148, 28 ) title:@"Debug-Info" target:self action:@selector(showDebugInfoAction:) inView:_leftContentView];
 
-	[self createLabel:NSMakeRect( 16, 266, 90, 24 ) text:@"Meldungen" inView:_leftContentView bold:NO];
-	_messagesView = [self createTextView:NSMakeRect( 10, 42, 810, 220 ) inView:_leftContentView];
+	_messagesLabel = [self createLabel:NSMakeRect( 16, 0, 90, 24 ) text:@"Meldungen" inView:_leftContentView bold:NO];
+	_messagesView = [self createTextView:NSMakeRect( 10, 0, 740, 180 ) inView:_leftContentView];
 
-	NSBox *rawBox = [self createSectionBox:NSMakeRect( 10, -40, 810, 72 ) title:@"Rohkommando" inView:_leftContentView];
-	NSView *rawView = [rawBox contentView];
-	_rawField = [self createField:NSMakeRect( 14, 12, 520, 28 ) text:@"" inView:rawView];
-	[self createButton:NSMakeRect( 548, 10, 170, 30 ) title:@"Senden" target:self action:@selector(sendRawAction:) inView:rawView];
-	[self createButton:NSMakeRect( 726, 10, 40, 30 ) title:@"i" target:self action:@selector(showRawHelpAction:) inView:rawView];
+	_rawBox = [self createSectionBox:NSMakeRect( 10, 0, 740, 64 ) title:@"Rohkommando" inView:_leftContentView];
+	NSView *rawView = [_rawBox contentView];
+	_rawField = [self createField:NSMakeRect( 14, 10, 500, 28 ) text:@"" inView:rawView];
+	[self createButton:NSMakeRect( 528, 8, 150, 30 ) title:@"Senden" target:self action:@selector(sendRawAction:) inView:rawView];
+	[self createInfoButton:NSMakeRect( 686, 8, 34, 30 ) key:@"raw" title:@"Hilfe: Rohkommandos" inView:rawView];
 
-	_toggleControlButton = [self createButton:NSMakeRect( 10, -86, 810, 30 ) title:@"Steuerung / Parameter einblenden" target:self action:@selector(toggleControlAction:) inView:_leftContentView];
-	_controlBox = [self createSectionBox:NSMakeRect( 10, -414, 810, 320 ) title:@"Steuerung / Parameter" inView:_leftContentView];
+	_toggleControlButton = [self createButton:NSMakeRect( 10, 0, 740, 30 ) title:@"Steuerung / Parameter einblenden" target:self action:@selector(toggleControlAction:) inView:_leftContentView];
+	_controlBox = [self createSectionBox:NSMakeRect( 10, 0, 740, 516 ) title:@"Steuerung / Parameter" inView:_leftContentView];
 	NSView *controlView = [_controlBox contentView];
 
-	[self createLabel:NSMakeRect( 16, 260, 40, 24 ) text:@"Kanal" inView:controlView bold:NO];
-	_controlChannelPopup = [self createPopup:NSMakeRect( 70, 256, 90, 28 ) titles:@[@"1", @"2"] inView:controlView];
+	[self createLabel:NSMakeRect( 16, 10, 40, 24 ) text:@"Kanal" inView:controlView bold:NO];
+	_controlChannelPopup = [self createPopup:NSMakeRect( 70, 8, 90, 28 ) titles:@[@"1", @"2"] inView:controlView];
 	[_controlChannelPopup setTarget:self];
 	[_controlChannelPopup setAction:@selector(controlChannelChanged:)];
-	[self createButton:NSMakeRect( 180, 254, 120, 30 ) title:@"Gauge EIN" target:self action:@selector(gaugeOnAction:) inView:controlView];
-	[self createButton:NSMakeRect( 310, 254, 120, 30 ) title:@"Gauge AUS" target:self action:@selector(gaugeOffAction:) inView:controlView];
-	[self createButton:NSMakeRect( 440, 254, 170, 30 ) title:@"Messwert jetzt lesen" target:self action:@selector(readNowAction:) inView:controlView];
-	[self createButton:NSMakeRect( 620, 254, 170, 30 ) title:@"Aktivieren + prüfen" target:self action:@selector(activateVerifyAction:) inView:controlView];
+	[self createButton:NSMakeRect( 264, 8, 126, 30 ) title:@"Gauge EIN" target:self action:@selector(gaugeOnAction:) inView:controlView];
+	[self createButton:NSMakeRect( 398, 8, 126, 30 ) title:@"Gauge AUS" target:self action:@selector(gaugeOffAction:) inView:controlView];
+	[self createInfoButton:NSMakeRect( 706, 8, 24, 30 ) key:@"sensor" title:@"Hilfe: Gauge ein/aus" inView:controlView];
 
-	[self createLabel:NSMakeRect( 16, 220, 50, 24 ) text:@"Einheit" inView:controlView bold:NO];
-	_unitPopup = [self createPopup:NSMakeRect( 70, 216, 120, 28 ) titles:@[@"mbar", @"Torr", @"Pa"] inView:controlView];
-	[self createButton:NSMakeRect( 200, 214, 100, 30 ) title:@"Einheit setzen" target:self action:@selector(setUnitAction:) inView:controlView];
-	[self createButton:NSMakeRect( 310, 214, 120, 30 ) title:@"Degas EIN" target:self action:@selector(degasOnAction:) inView:controlView];
-	[self createButton:NSMakeRect( 440, 214, 120, 30 ) title:@"Degas AUS" target:self action:@selector(degasOffAction:) inView:controlView];
-	[self createButton:NSMakeRect( 620, 214, 170, 30 ) title:@"Diagnose" target:self action:@selector(diagnoseAction:) inView:controlView];
+	[self createLabel:NSMakeRect( 16, 46, 50, 24 ) text:@"Einheit" inView:controlView bold:NO];
+	_unitPopup = [self createPopup:NSMakeRect( 70, 44, 120, 28 ) titles:@[@"mbar", @"Torr", @"Pa"] inView:controlView];
+	[self createButton:NSMakeRect( 264, 44, 138, 30 ) title:@"Einheit setzen" target:self action:@selector(setUnitAction:) inView:controlView];
+	[self createInfoButton:NSMakeRect( 706, 44, 24, 30 ) key:@"unit" title:@"Hilfe: Einheit" inView:controlView];
 
-	[self createLabel:NSMakeRect( 16, 180, 40, 24 ) text:@"Filter" inView:controlView bold:NO];
-	_filterPopup = [self createPopup:NSMakeRect( 70, 176, 120, 28 ) titles:@[@"fast", @"standard", @"slow"] inView:controlView];
+	[self createButton:NSMakeRect( 264, 80, 178, 30 ) title:@"Messwert jetzt lesen" target:self action:@selector(readNowAction:) inView:controlView];
+	[self createInfoButton:NSMakeRect( 446, 80, 24, 30 ) key:@"read_now" title:@"Hilfe: Messwert jetzt lesen" inView:controlView];
+	[self createButton:NSMakeRect( 482, 80, 174, 30 ) title:@"Aktivieren + prüfen" target:self action:@selector(activateVerifyAction:) inView:controlView];
+	[self createInfoButton:NSMakeRect( 706, 80, 24, 30 ) key:@"activate" title:@"Hilfe: Gauge aktivieren + prüfen" inView:controlView];
+
+	[self createButton:NSMakeRect( 264, 116, 126, 30 ) title:@"Degas EIN" target:self action:@selector(degasOnAction:) inView:controlView];
+	[self createButton:NSMakeRect( 398, 116, 126, 30 ) title:@"Degas AUS" target:self action:@selector(degasOffAction:) inView:controlView];
+	[self createInfoButton:NSMakeRect( 706, 116, 24, 30 ) key:@"degas" title:@"Hilfe: Degas" inView:controlView];
+
+	[self createLabel:NSMakeRect( 16, 154, 40, 24 ) text:@"Filter" inView:controlView bold:NO];
+	_filterPopup = [self createPopup:NSMakeRect( 70, 152, 120, 28 ) titles:@[@"fast", @"standard", @"slow"] inView:controlView];
 	[_filterPopup selectItemAtIndex:1];
-	[self createButton:NSMakeRect( 200, 174, 100, 30 ) title:@"Filter setzen" target:self action:@selector(setFilterAction:) inView:controlView];
-	[self createLabel:NSMakeRect( 320, 180, 90, 24 ) text:@"Kalibrierfaktor" inView:controlView bold:NO];
-	_calibrationField = [self createField:NSMakeRect( 420, 176, 90, 28 ) text:@"1.000" inView:controlView];
-	[self createButton:NSMakeRect( 520, 174, 90, 30 ) title:@"CAL setzen" target:self action:@selector(setCalibrationAction:) inView:controlView];
+	[self createButton:NSMakeRect( 264, 152, 138, 30 ) title:@"Filter setzen" target:self action:@selector(setFilterAction:) inView:controlView];
+	[self createInfoButton:NSMakeRect( 706, 152, 24, 30 ) key:@"filter" title:@"Hilfe: Filter" inView:controlView];
 
-	[self createLabel:NSMakeRect( 16, 140, 40, 24 ) text:@"FSR" inView:controlView bold:NO];
-	_fsrPopup = [self createPopup:NSMakeRect( 70, 136, 160, 28 ) titles:@[@"1000 mbar"] inView:controlView];
-	[self createButton:NSMakeRect( 240, 134, 100, 30 ) title:@"FSR setzen" target:self action:@selector(setFsrAction:) inView:controlView];
-	[self createLabel:NSMakeRect( 360, 140, 40, 24 ) text:@"OFC" inView:controlView bold:NO];
-	_ofcPopup = [self createPopup:NSMakeRect( 410, 136, 100, 28 ) titles:@[@"off", @"on", @"auto"] inView:controlView];
-	[self createButton:NSMakeRect( 520, 134, 100, 30 ) title:@"OFC setzen" target:self action:@selector(setOfcAction:) inView:controlView];
+	[self createLabel:NSMakeRect( 16, 190, 104, 24 ) text:@"Kalibrierfaktor" inView:controlView bold:NO];
+	_calibrationField = [self createField:NSMakeRect( 128, 188, 90, 28 ) text:@"1.000" inView:controlView];
+	[self createButton:NSMakeRect( 264, 188, 118, 30 ) title:@"CAL setzen" target:self action:@selector(setCalibrationAction:) inView:controlView];
+	[self createInfoButton:NSMakeRect( 706, 188, 24, 30 ) key:@"calibration" title:@"Hilfe: Kalibrierfaktor" inView:controlView];
 
-	[self createLabel:NSMakeRect( 16, 100, 92, 24 ) text:@"Anzeigename" inView:controlView bold:NO];
-	_displayNameField = [self createField:NSMakeRect( 112, 96, 140, 28 ) text:@"Kanal 1" inView:controlView];
-	[self createButton:NSMakeRect( 262, 94, 120, 30 ) title:@"Namen speichern" target:self action:@selector(setDisplayNameAction:) inView:controlView];
-	[self createLabel:NSMakeRect( 400, 100, 40, 24 ) text:@"Digits" inView:controlView bold:NO];
-	_digitsPopup = [self createPopup:NSMakeRect( 446, 96, 90, 28 ) titles:@[@"2", @"3"] inView:controlView];
+	[self createLabel:NSMakeRect( 16, 226, 64, 24 ) text:@"Full Scale" inView:controlView bold:NO];
+	_fsrPopup = [self createPopup:NSMakeRect( 128, 224, 126, 28 ) titles:@[@"1000 mbar"] inView:controlView];
+	[self createButton:NSMakeRect( 264, 224, 118, 30 ) title:@"FSR setzen" target:self action:@selector(setFsrAction:) inView:controlView];
+	[self createInfoButton:NSMakeRect( 706, 224, 24, 30 ) key:@"fsr" title:@"Hilfe: Full Scale / FSR" inView:controlView];
+
+	[self createLabel:NSMakeRect( 16, 262, 76, 24 ) text:@"Offset-Korr." inView:controlView bold:NO];
+	_ofcPopup = [self createPopup:NSMakeRect( 128, 260, 126, 28 ) titles:@[@"off", @"on", @"auto"] inView:controlView];
+	[self createButton:NSMakeRect( 264, 260, 118, 30 ) title:@"OFC setzen" target:self action:@selector(setOfcAction:) inView:controlView];
+	[self createInfoButton:NSMakeRect( 706, 260, 24, 30 ) key:@"ofc" title:@"Hilfe: Offset-Korrektur" inView:controlView];
+
+	NSTextField *channelNameLabel = [self createLabel:NSMakeRect( 16, 298, 122, 24 ) text:@"Kanalname (Gerät)" inView:controlView bold:NO];
+	_channelNameField = [self createField:NSMakeRect( 144, 296, 112, 28 ) text:@"Kanal 1" inView:controlView];
+	NSButton *channelNameButton = [self createButton:NSMakeRect( 264, 296, 118, 30 ) title:@"Name setzen" target:self action:@selector(setChannelNameAction:) inView:controlView];
+	NSButton *channelNameInfo = [self createInfoButton:NSMakeRect( 706, 296, 24, 30 ) key:@"channel_name" title:@"Hilfe: Kanalname" inView:controlView];
+
+	NSTextField *digitsLabel = [self createLabel:NSMakeRect( 16, 334, 40, 24 ) text:@"Digits" inView:controlView bold:NO];
+	_digitsPopup = [self createPopup:NSMakeRect( 144, 332, 82, 28 ) titles:@[@"2", @"3"] inView:controlView];
 	[_digitsPopup selectItemAtIndex:1];
-	[self createButton:NSMakeRect( 546, 94, 80, 30 ) title:@"Setzen" target:self action:@selector(setDigitsAction:) inView:controlView];
+	NSButton *digitsButton = [self createButton:NSMakeRect( 264, 332, 118, 30 ) title:@"Digits setzen" target:self action:@selector(setDigitsAction:) inView:controlView];
+	NSButton *digitsInfo = [self createInfoButton:NSMakeRect( 706, 332, 24, 30 ) key:@"digits" title:@"Hilfe: Digits" inView:controlView];
 
-	[self createLabel:NSMakeRect( 16, 60, 60, 24 ) text:@"Contrast" inView:controlView bold:NO];
-	_contrastField = [self createField:NSMakeRect( 84, 56, 60, 28 ) text:@"10" inView:controlView];
-	[self createButton:NSMakeRect( 152, 54, 100, 30 ) title:@"Contrast" target:self action:@selector(setContrastAction:) inView:controlView];
-	[self createLabel:NSMakeRect( 272, 60, 88, 24 ) text:@"Screensave [h]" inView:controlView bold:NO];
-	_screensaveField = [self createField:NSMakeRect( 368, 56, 60, 28 ) text:@"0" inView:controlView];
-	[self createButton:NSMakeRect( 436, 54, 120, 30 ) title:@"Screensave" target:self action:@selector(setScreensaveAction:) inView:controlView];
+	NSTextField *contrastLabel = [self createLabel:NSMakeRect( 16, 370, 60, 24 ) text:@"Contrast" inView:controlView bold:NO];
+	_contrastField = [self createField:NSMakeRect( 144, 368, 82, 28 ) text:@"10" inView:controlView];
+	NSButton *contrastButton = [self createButton:NSMakeRect( 264, 368, 118, 30 ) title:@"Contrast setzen" target:self action:@selector(setContrastAction:) inView:controlView];
+	NSButton *contrastInfo = [self createInfoButton:NSMakeRect( 706, 368, 24, 30 ) key:@"contrast" title:@"Hilfe: Contrast" inView:controlView];
+	NSTextField *screensaveLabel = [self createLabel:NSMakeRect( 16, 406, 92, 24 ) text:@"Screensave [h]" inView:controlView bold:NO];
+	_screensaveField = [self createField:NSMakeRect( 144, 404, 82, 28 ) text:@"0" inView:controlView];
+	NSButton *screensaveButton = [self createButton:NSMakeRect( 264, 404, 132, 30 ) title:@"Screensave setzen" target:self action:@selector(setScreensaveAction:) inView:controlView];
+	NSButton *screensaveInfo = [self createInfoButton:NSMakeRect( 706, 404, 24, 30 ) key:@"screensave" title:@"Hilfe: Screensave" inView:controlView];
+
+	_displayNameLabel = [self createLabel:NSMakeRect( 16, 442, 92, 24 ) text:@"Anzeigename" inView:controlView bold:NO];
+	_displayNameField = [self createField:NSMakeRect( 144, 440, 112, 28 ) text:@"Kanal 1" inView:controlView];
+	_displayNameButton = [self createButton:NSMakeRect( 264, 440, 138, 30 ) title:@"Namen speichern" target:self action:@selector(setDisplayNameAction:) inView:controlView];
+
+	_maxiOnlyViews = @[ channelNameLabel, _channelNameField, channelNameButton, channelNameInfo,
+						digitsLabel, _digitsPopup, digitsButton, digitsInfo,
+						contrastLabel, _contrastField, contrastButton, contrastInfo,
+						screensaveLabel, _screensaveField, screensaveButton, screensaveInfo ];
 
 	[_controlBox setHidden:YES];
 	_controlVisible = NO;
 
-	_plotView = [[PressurePlotView alloc] initWithFrame:NSMakeRect( 20, 50, rightView.frame.size.width - 40, rightView.frame.size.height - 80 )];
-	[_plotView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-	[rightView addSubview:_plotView];
-	[self createButton:NSMakeRect( 20, 12, 120, 30 ) title:@"Externer Plot" target:self action:@selector(openExternalPlotAction:) inView:rightView];
-	[self createButton:NSMakeRect( 150, 12, 120, 30 ) title:@"CSV plotten" target:self action:@selector(plotCsvAction:) inView:rightView];
+	_plotView = [[PressurePlotView alloc] initWithFrame:NSMakeRect( 20, 20, _rightView.frame.size.width - 40, _rightView.frame.size.height - 88 )];
+	[_rightView addSubview:_plotView];
+
+	_plotFooterView = [[PressureFlippedView alloc] initWithFrame:NSMakeRect( 0, _rightView.frame.size.height - 58, _rightView.frame.size.width, 58 )];
+	[_rightView addSubview:_plotFooterView];
+	_plotHomeButton = [self createButton:NSMakeRect( 0, 14, 82, 30 ) title:@"Home" target:self action:@selector(resetPlotZoomAction:) inView:_plotFooterView];
+	_plotZoomOutButton = [self createButton:NSMakeRect( 0, 14, 44, 30 ) title:@"-" target:self action:@selector(plotZoomOutAction:) inView:_plotFooterView];
+	_plotZoomInButton = [self createButton:NSMakeRect( 0, 14, 44, 30 ) title:@"+" target:self action:@selector(plotZoomInAction:) inView:_plotFooterView];
+	_clearPlotButton = [self createButton:NSMakeRect( 0, 14, 118, 30 ) title:@"Plot leeren" target:self action:@selector(clearPlotAction:) inView:_plotFooterView];
+	_externalPlotButton = [self createButton:NSMakeRect( 0, 14, 128, 30 ) title:@"Externer Plot" target:self action:@selector(openExternalPlotAction:) inView:_plotFooterView];
+	_plotCsvButton = [self createButton:NSMakeRect( 0, 14, 118, 30 ) title:@"CSV plotten" target:self action:@selector(plotCsvAction:) inView:_plotFooterView];
+
+	[self layoutInterface];
 }
 
 
@@ -890,6 +1165,7 @@ namespace
 - (void)updateDeviceProfile
 {
 	const BOOL maxi = ([self selectedDeviceType] == PressureLoggerDevice_MaxiGauge);
+	[_intervalTitleLabel setStringValue:maxi ? @"Polling-Intervall" : @"Continuous Mode"];
 
 	[_intervalPopup removeAllItems];
 	if ( maxi )
@@ -913,6 +1189,13 @@ namespace
 	[_digitsPopup setEnabled:maxi];
 	[_contrastField setEnabled:maxi];
 	[_screensaveField setEnabled:maxi];
+	for ( NSView *view in _maxiOnlyViews )
+		[view setHidden:!maxi];
+
+	const CGFloat displayNameY = maxi ? 442.0 : 298.0;
+	[_displayNameLabel setFrame:NSMakeRect( 16, displayNameY, 92, 24 )];
+	[_displayNameField setFrame:NSMakeRect( 144, displayNameY - 2.0, 112, 28 )];
+	[_displayNameButton setFrame:NSMakeRect( 264, displayNameY - 2.0, 138, 30 )];
 
 	for ( NSInteger i = 0; i < 6; i++ )
 	{
@@ -928,6 +1211,7 @@ namespace
 	_engine.SetLastSelection( [self selectedDeviceType], _ToStdString( [_portPopup titleOfSelectedItem] ) );
 	[_csvField setStringValue:_ToNSString( _engine.MakeDefaultCsvPath( [self selectedDeviceType] ) )];
 	[self controlChannelChanged:nil];
+	[self layoutInterface];
 }
 
 
@@ -935,6 +1219,164 @@ namespace
 {
 	(void) sender;
 	[self updateDeviceProfile];
+}
+
+
+- (void)layoutInterface
+{
+	const CGFloat leftWidth = 760.0;
+	const CGFloat outerPadding = 10.0;
+	const CGFloat cardGap = 12.0;
+	const CGFloat cardHeight = 122.0;
+	const CGFloat cardsTop = CGRectGetMaxY( [_connectionBox frame] ) + 14.0;
+	const NSInteger cardRows = ([self activeChannelCount] + 1) / 2;
+
+	CGFloat currentY = cardsTop;
+	const CGFloat cardWidth = (leftWidth - outerPadding * 2.0 - cardGap) / 2.0;
+	for ( NSInteger i = 0; i < 6; i++ )
+	{
+		const NSInteger row = i / 2;
+		const NSInteger col = i % 2;
+		[_channelCards[i] setFrame:NSMakeRect( outerPadding + col * (cardWidth + cardGap),
+											  currentY + row * (cardHeight + 12.0),
+											  cardWidth,
+											  cardHeight )];
+	}
+	currentY += cardRows * (cardHeight + 12.0) - 2.0;
+
+	[_plotSelectionLabel setFrame:NSMakeRect( 16, currentY, 120, 24 )];
+	for ( int i = 0; i < 6; i++ )
+		[_plotChecks[i] setFrame:NSMakeRect( 145 + i * 44, currentY - 1.0, 42, 24 )];
+	[_renameChannelsButton setFrame:NSMakeRect( 430, currentY - 2.0, 132, 28 )];
+	[_debugInfoButton setFrame:NSMakeRect( 572, currentY - 2.0, 148, 28 )];
+
+	currentY += 32.0;
+	[_messagesLabel setFrame:NSMakeRect( 16, currentY, 90, 24 )];
+	NSScrollView *messagesScroll = [_messagesView enclosingScrollView];
+	[messagesScroll setFrame:NSMakeRect( outerPadding, currentY + 26.0, leftWidth - outerPadding * 2.0, 162.0 )];
+
+	currentY += 198.0;
+	[_rawBox setFrame:NSMakeRect( outerPadding, currentY, leftWidth - outerPadding * 2.0, 64.0 )];
+	currentY += 74.0;
+	[_toggleControlButton setFrame:NSMakeRect( outerPadding, currentY, leftWidth - outerPadding * 2.0, 30.0 )];
+	currentY += 40.0;
+
+	if ( _controlVisible )
+	{
+		[_controlBox setHidden:NO];
+			const CGFloat controlHeight = ([self selectedDeviceType] == PressureLoggerDevice_MaxiGauge) ? 516.0 : 374.0;
+		[_controlBox setFrame:NSMakeRect( outerPadding, currentY, leftWidth - outerPadding * 2.0, controlHeight )];
+		currentY += controlHeight + 10.0;
+	}
+	else
+	{
+		[_controlBox setHidden:YES];
+	}
+
+	const CGFloat contentHeight = std::max( currentY + 16.0, _leftScrollView.bounds.size.height );
+	[_leftContentView setFrame:NSMakeRect( 0, 0, leftWidth, contentHeight )];
+
+	const CGFloat rightWidth = _rightView.bounds.size.width;
+	const CGFloat rightHeight = _rightView.bounds.size.height;
+	const CGFloat footerHeight = 58.0;
+	[_plotView setFrame:NSMakeRect( 20, 20, rightWidth - 40, rightHeight - footerHeight - 30 )];
+	[_plotFooterView setFrame:NSMakeRect( 0, rightHeight - footerHeight, rightWidth, footerHeight )];
+
+	[_plotHomeButton setFrame:NSMakeRect( 20, 14, 82, 30 )];
+	[_plotZoomOutButton setFrame:NSMakeRect( 110, 14, 44, 30 )];
+	[_plotZoomInButton setFrame:NSMakeRect( 162, 14, 44, 30 )];
+
+	CGFloat buttonRight = rightWidth - 20.0;
+	[_plotCsvButton setFrame:NSMakeRect( buttonRight - 118.0, 14, 118, 30 )];
+	buttonRight -= 128.0;
+	[_externalPlotButton setFrame:NSMakeRect( buttonRight - 128.0, 14, 128, 30 )];
+	buttonRight -= 138.0;
+	[_clearPlotButton setFrame:NSMakeRect( buttonRight - 118.0, 14, 118, 30 )];
+}
+
+
+- (void)showHelpAction:(id)sender
+{
+	NSButton *button = (NSButton *) sender;
+	NSString *key = [button identifier];
+	NSString *title = [button toolTip] ?: @"Hilfe";
+	if ( key != nil )
+		[self showHelpWindowWithTitle:title key:_ToStdString( key )];
+}
+
+
+- (void)showTextWindowWithTitle:(NSString *)title content:(NSString *)content
+{
+	NSWindow *textWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect( 0, 0, 820, 680 )
+													 styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable)
+													   backing:NSBackingStoreBuffered
+														 defer:NO];
+	[textWindow setTitle:(title ?: @"Text")];
+	[textWindow center];
+
+	NSTextView *textView = [self createTextView:NSMakeRect( 10, 10, 800, 660 ) inView:[textWindow contentView]];
+	[[textView textStorage] setAttributedString:[[NSAttributedString alloc] initWithString:(content ?: @"") attributes:@{NSFontAttributeName:_MonoFont()}]];
+	[textWindow makeKeyAndOrderFront:nil];
+}
+
+
+- (void)editChannelNamesAction:(id)sender
+{
+	(void) sender;
+	const NSInteger channelCount = [self activeChannelCount];
+	NSView *accessoryView = [[NSView alloc] initWithFrame:NSMakeRect( 0, 0, 360, 26 + channelCount * 34 )];
+	NSMutableArray<NSTextField *> *fields = [NSMutableArray arrayWithCapacity:channelCount];
+
+	for ( NSInteger i = 0; i < channelCount; i++ )
+	{
+		const CGFloat rowY = 8.0 + i * 34.0;
+		NSTextField *label = [self createLabel:NSMakeRect( 0, rowY + 4.0, 76, 24 ) text:[NSString stringWithFormat:@"Kanal %ld", static_cast<long>( i + 1 )] inView:accessoryView bold:NO];
+		[label setAlignment:NSTextAlignmentRight];
+		NSTextField *field = [self createField:NSMakeRect( 88, rowY, 254, 28 ) text:_ToNSString( _engine.GetDisplayChannelName( [self selectedDeviceType], static_cast<BYTE>( i + 1 ) ) ) inView:accessoryView];
+		[fields addObject:field];
+	}
+
+	NSAlert *alert = [[NSAlert alloc] init];
+	[alert setAlertStyle:NSAlertStyleInformational];
+	[alert setMessageText:@"Anzeigenamen bearbeiten"];
+	[alert setInformativeText:@"Die Namen werden lokal gespeichert und direkt in Karten und Plot-Legende verwendet."];
+	[alert addButtonWithTitle:@"Speichern"];
+	[alert addButtonWithTitle:@"Abbrechen"];
+	[alert setAccessoryView:accessoryView];
+	if ( [alert runModal] != NSAlertFirstButtonReturn )
+		return;
+
+	for ( NSInteger i = 0; i < channelCount; i++ )
+	{
+		const DWORD error = _engine.SetDisplayChannelName( [self selectedDeviceType], static_cast<BYTE>( i + 1 ), _ToStdString( [[fields objectAtIndex:i] stringValue] ) );
+		if ( error != EC_OK )
+		{
+			[self showError:error];
+			return;
+		}
+	}
+
+	[self controlChannelChanged:nil];
+	[self refreshUi:nil];
+}
+
+
+- (void)showDebugInfoAction:(id)sender
+{
+	(void) sender;
+	PressureLoggerStateSnapshot snapshot;
+	_engine.GetStateSnapshot( &snapshot );
+
+	std::stringstream report;
+	report << "Selected device: " << _ToStdString( [_devicePopup titleOfSelectedItem] ) << "\n";
+	report << "Selected port: " << _ToStdString( [_portPopup titleOfSelectedItem] ) << "\n";
+	report << "Live only: " << (([_liveOnlyCheck state] == NSControlStateValueOn) ? "yes" : "no") << "\n";
+	report << "Long term: " << (([_longTermCheck state] == NSControlStateValueOn) ? "yes" : "no") << "\n\n";
+	report << _engine.FormatLatestValues( snapshot ) << "\n\n";
+	report << "Recent samples\n";
+	report << _engine.FormatRecentSamples( snapshot, 8 );
+
+	[self showTextWindowWithTitle:@"Debug-Info" content:_ToNSString( report.str() )];
 }
 
 
@@ -950,7 +1392,10 @@ namespace
 {
 	(void) sender;
 	const NSInteger channel = [_controlChannelPopup indexOfSelectedItem] + 1;
-	_displayNameField.stringValue = _ToNSString( _engine.GetDisplayChannelName( [self selectedDeviceType], static_cast<BYTE>( channel ) ) );
+	NSString *name = _ToNSString( _engine.GetDisplayChannelName( [self selectedDeviceType], static_cast<BYTE>( channel ) ) );
+	_displayNameField.stringValue = name;
+	if ( _channelNameField != nil )
+		_channelNameField.stringValue = name;
 }
 
 
@@ -960,6 +1405,47 @@ namespace
 	_controlVisible = !_controlVisible;
 	[_controlBox setHidden:!_controlVisible];
 	[_toggleControlButton setTitle:_controlVisible ? @"Steuerung / Parameter ausblenden" : @"Steuerung / Parameter einblenden"];
+	[self layoutInterface];
+}
+
+
+- (void)resetPlotZoomAction:(id)sender
+{
+	(void) sender;
+	[_plotView resetZoom];
+	if ( _externalPlotView != nil )
+		[_externalPlotView resetZoom];
+	if ( _csvPlotView != nil )
+		[_csvPlotView resetZoom];
+}
+
+
+- (void)plotZoomInAction:(id)sender
+{
+	(void) sender;
+	[_plotView zoomIn];
+	if ( _externalPlotView != nil )
+		[_externalPlotView zoomIn];
+	if ( _csvPlotView != nil )
+		[_csvPlotView zoomIn];
+}
+
+
+- (void)plotZoomOutAction:(id)sender
+{
+	(void) sender;
+	[_plotView zoomOut];
+	if ( _externalPlotView != nil )
+		[_externalPlotView zoomOut];
+	if ( _csvPlotView != nil )
+		[_csvPlotView zoomOut];
+}
+
+
+- (void)windowDidResize:(NSNotification *)notification
+{
+	(void) notification;
+	[self layoutInterface];
 }
 
 
@@ -1019,8 +1505,11 @@ namespace
 }
 
 
-- (PressureLoggerConnectionSetup)buildSetup
+- (BOOL)buildSetup:(PressureLoggerConnectionSetup *)setupOut
 {
+	if ( setupOut == nil )
+		return NO;
+
 	PressureLoggerConnectionSetup setup;
 	setup.DeviceType = [self selectedDeviceType];
 	setup.sPort = _ToStdString( [_portPopup titleOfSelectedItem] );
@@ -1035,7 +1524,8 @@ namespace
 		if ( setup.bTPG262LongTermMode )
 		{
 			double value = 60.0;
-			[self readDoubleField:_longTermField value:&value label:@"Langzeitmodus"];
+			if ( ![self readDoubleField:_longTermField value:&value label:@"Langzeitmodus"] )
+				return NO;
 			setup.dPollingSeconds = std::max( 1.0, value );
 		}
 	}
@@ -1046,19 +1536,25 @@ namespace
 		if ( setup.bTPG262LongTermMode )
 		{
 			double value = 60.0;
-			[self readDoubleField:_longTermField value:&value label:@"Langzeitmodus"];
+			if ( ![self readDoubleField:_longTermField value:&value label:@"Langzeitmodus"] )
+				return NO;
 			setup.dPollingSeconds = std::max( 1.0, value );
 		}
 	}
 
-	return setup;
+	*setupOut = setup;
+	return YES;
 }
 
 
 - (void)connectAction:(id)sender
 {
 	(void) sender;
-	const DWORD error = _engine.Connect( [self buildSetup] );
+	PressureLoggerConnectionSetup setup;
+	if ( ![self buildSetup:&setup] )
+		return;
+
+	const DWORD error = _engine.Connect( setup );
 	if ( error != EC_OK )
 		[self showError:error];
 }
@@ -1079,7 +1575,11 @@ namespace
 	NSSavePanel *panel = [NSSavePanel savePanel];
 	[panel setNameFieldStringValue:[_csvField stringValue]];
 	if ( [panel runModal] == NSModalResponseOK )
+	{
 		[_csvField setStringValue:[[panel URL] path]];
+		if ( [_liveOnlyCheck state] != NSControlStateValueOn )
+			[_fileStatusLabel setStringValue:[NSString stringWithFormat:@"Datei: %@", [_csvField stringValue]]];
+	}
 }
 
 
@@ -1116,6 +1616,15 @@ namespace
 {
 	(void) sender;
 	const DWORD error = _engine.StopLogging();
+	if ( error != EC_OK )
+		[self showError:error];
+}
+
+
+- (void)clearPlotAction:(id)sender
+{
+	(void) sender;
+	const DWORD error = _engine.ClearHistory();
 	if ( error != EC_OK )
 		[self showError:error];
 }
@@ -1258,9 +1767,28 @@ namespace
 - (void)setDisplayNameAction:(id)sender
 {
 	(void) sender;
-	const DWORD error = _engine.SetChannelName( [self selectedChannel], _ToStdString( [_displayNameField stringValue] ) );
+	const DWORD error = _engine.SetDisplayChannelName( [self selectedDeviceType], [self selectedChannel], _ToStdString( [_displayNameField stringValue] ) );
 	if ( error != EC_OK )
 		[self showError:error];
+	else
+	{
+		[self controlChannelChanged:nil];
+		[self refreshUi:nil];
+	}
+}
+
+
+- (void)setChannelNameAction:(id)sender
+{
+	(void) sender;
+	const DWORD error = _engine.SetChannelName( [self selectedChannel], _ToStdString( [_channelNameField stringValue] ) );
+	if ( error != EC_OK )
+		[self showError:error];
+	else
+	{
+		[self controlChannelChanged:nil];
+		[self refreshUi:nil];
+	}
 }
 
 
@@ -1310,16 +1838,7 @@ namespace
 
 - (void)showHelpWindowWithTitle:(NSString *)title key:(const std::string &)key
 {
-	NSWindow *helpWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect( 0, 0, 780, 620 )
-													 styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
-													   backing:NSBackingStoreBuffered
-														 defer:NO];
-	[helpWindow setTitle:title];
-	[helpWindow center];
-
-	NSTextView *helpText = [self createTextView:NSMakeRect( 10, 10, 760, 600 ) inView:[helpWindow contentView]];
-	[[helpText textStorage] setAttributedString:[[NSAttributedString alloc] initWithString:_ToNSString( _engine.GetHelpText( key ) ) attributes:@{NSFontAttributeName:_MonoFont()}]];
-	[helpWindow makeKeyAndOrderFront:nil];
+	[self showTextWindowWithTitle:title content:_ToNSString( _engine.GetHelpText( key ) )];
 }
 
 
@@ -1345,6 +1864,9 @@ namespace
 		[[_externalPlotWindow contentView] addSubview:_externalPlotView];
 	}
 
+	PressureLoggerStateSnapshot snapshot;
+	_engine.GetStateSnapshot( &snapshot );
+	[_externalPlotView updateWithSnapshot:snapshot engine:&_engine visibleChannels:_plotVisible channelCount:[self activeChannelCount]];
 	[_externalPlotWindow makeKeyAndOrderFront:nil];
 }
 
@@ -1383,19 +1905,29 @@ namespace
 		if ( values.size() != headers.size() )
 			continue;
 
-		PressureSample sample;
-		sample.dSecondsSinceStart = std::stod( values[0] );
-		for ( size_t channel = 1; channel < headers.size() / 2 + 1; channel++ )
+		try
 		{
-			PressureChannelReading reading;
-			reading.byChannel = static_cast<BYTE>( channel );
-			reading.nStatusCode = std::stoi( values[1 + (channel - 1) * 2] );
-			reading.dPressure = std::stod( values[2 + (channel - 1) * 2] );
-			reading.sStatusText = CPfeifferGaugeDriver::StatusText( reading.nStatusCode );
-			sample.ChannelValues.push_back( reading );
-		}
+			PressureSample sample;
+			std::replace( values[0].begin(), values[0].end(), ',', '.' );
+			sample.dSecondsSinceStart = std::stod( values[0] );
+			for ( size_t channel = 1; channel < headers.size() / 2 + 1; channel++ )
+			{
+				PressureChannelReading reading;
+				reading.byChannel = static_cast<BYTE>( channel );
+				reading.nStatusCode = std::stoi( values[1 + (channel - 1) * 2] );
+				std::string pressure_text = values[2 + (channel - 1) * 2];
+				std::replace( pressure_text.begin(), pressure_text.end(), ',', '.' );
+				reading.dPressure = std::stod( pressure_text );
+				reading.sStatusText = CPfeifferGaugeDriver::StatusText( reading.nStatusCode );
+				sample.ChannelValues.push_back( reading );
+			}
 
-		_csvSnapshot.History.push_back( sample );
+			_csvSnapshot.History.push_back( sample );
+		}
+		catch ( ... )
+		{
+			continue;
+		}
 	}
 
 	return YES;
@@ -1406,7 +1938,10 @@ namespace
 {
 	(void) sender;
 	NSOpenPanel *panel = [NSOpenPanel openPanel];
-	[panel setAllowedFileTypes:@[@"csv"]];
+	#pragma clang diagnostic push
+	#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+		[panel setAllowedFileTypes:@[@"csv"]];
+	#pragma clang diagnostic pop
 	if ( [panel runModal] != NSModalResponseOK )
 		return;
 
@@ -1445,12 +1980,28 @@ namespace
 	_engine.GetStateSnapshot( &snapshot );
 
 	[_connectionIndicator setIndicatorColor:snapshot.bConnected ? [NSColor colorWithCalibratedRed:0.18 green:0.49 blue:0.20 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.70 alpha:1.0]];
-	[_measurementIndicator setIndicatorColor:snapshot.bMonitoring ? [NSColor colorWithCalibratedRed:0.18 green:0.49 blue:0.20 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.70 alpha:1.0]];
-	[_fileIndicator setIndicatorColor:snapshot.bLogging ? [NSColor colorWithCalibratedRed:0.18 green:0.49 blue:0.20 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.70 alpha:1.0]];
+	if ( snapshot.bFaulted )
+		[_measurementIndicator setIndicatorColor:[NSColor colorWithCalibratedRed:0.78 green:0.22 blue:0.18 alpha:1.0]];
+	else
+		[_measurementIndicator setIndicatorColor:snapshot.bMonitoring ? [NSColor colorWithCalibratedRed:0.18 green:0.49 blue:0.20 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.70 alpha:1.0]];
+	if ( snapshot.bFaulted && !snapshot.sCsvPath.empty() )
+		[_fileIndicator setIndicatorColor:[NSColor colorWithCalibratedRed:0.78 green:0.22 blue:0.18 alpha:1.0]];
+	else
+		[_fileIndicator setIndicatorColor:snapshot.bLogging ? [NSColor colorWithCalibratedRed:0.18 green:0.49 blue:0.20 alpha:1.0] : [NSColor colorWithCalibratedWhite:0.70 alpha:1.0]];
 
-	[_measurementStatusLabel setStringValue:snapshot.bConnected ? (snapshot.bLogging ? @"Logging läuft" : @"Monitoring läuft") : @"Nicht verbunden"];
+	NSString *measurementText = @"Nicht verbunden";
+	if ( snapshot.bConnected )
+		measurementText = snapshot.bFaulted ? @"Monitoringfehler" : (snapshot.bLogging ? @"Logging läuft" : (snapshot.bMonitoring ? @"Monitoring läuft" : @"Bereit"));
+	[_measurementStatusLabel setStringValue:measurementText];
 	[_samplesStatusLabel setStringValue:[NSString stringWithFormat:@"Sam %u", static_cast<unsigned>( snapshot.dwSampleCount )]];
-	[_fileStatusLabel setStringValue:snapshot.bLogging ? [NSString stringWithFormat:@"Datei: %@", _ToNSString( snapshot.sCsvPath )] : @"Datei: Keine Datei offen"];
+	NSString *fileText = @"Datei: Keine Datei offen";
+	if ( snapshot.bLogging )
+		fileText = [NSString stringWithFormat:@"Datei: %@", _ToNSString( snapshot.sCsvPath )];
+	else if ( snapshot.bFaulted && !snapshot.sCsvPath.empty() )
+		fileText = [NSString stringWithFormat:@"Datei: %@ (nach Fehler geschlossen)", _ToNSString( snapshot.sCsvPath )];
+	else if ( snapshot.bMonitoring && ([_liveOnlyCheck state] == NSControlStateValueOn) )
+		fileText = @"Datei: Monitoring ohne Dateispeicherung";
+	[_fileStatusLabel setStringValue:fileText];
 
 	for ( NSInteger i = 0; i < [self activeChannelCount]; i++ )
 	{

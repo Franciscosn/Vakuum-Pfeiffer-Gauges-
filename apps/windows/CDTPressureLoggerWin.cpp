@@ -536,6 +536,11 @@ public:
 		hMonoFont = 0;
 		pEngine = 0;
 		ChannelCount = 2;
+		bHasCustomView = false;
+		ViewXMin = -0.05;
+		ViewXMax = 0.05;
+		ViewYMin = 1.0;
+		ViewYMax = 10.0;
 		for ( size_t i = 0; i < VisibleChannels.size(); i++ )
 			VisibleChannels[i] = (i < 2);
 	}
@@ -592,6 +597,23 @@ public:
 		return hWnd;
 	}
 
+	void ResetZoom()
+	{
+		bHasCustomView = false;
+		if ( hWnd != 0 )
+			InvalidateRect( hWnd, 0, TRUE );
+	}
+
+	void ZoomIn()
+	{
+		ApplyZoomFactor( 0.8 );
+	}
+
+	void ZoomOut()
+	{
+		ApplyZoomFactor( 1.25 );
+	}
+
 private:
 
 	static void RegisterClass( HINSTANCE hInstance )
@@ -603,6 +625,7 @@ private:
 		WNDCLASSEXW window_class;
 		ZeroMemory( &window_class, sizeof(window_class) );
 		window_class.cbSize = sizeof(window_class);
+		window_class.style = CS_DBLCLKS;
 		window_class.lpfnWndProc = WindowProc;
 		window_class.hInstance = hInstance;
 		window_class.lpszClassName = L"CDTPressurePlotWindow";
@@ -629,45 +652,69 @@ private:
 			pWindow->OnPaint();
 			return 0;
 		}
+		if ( (pWindow != 0) && (i_Message == WM_MOUSEWHEEL) )
+		{
+			pWindow->OnMouseWheel( GET_WHEEL_DELTA_WPARAM( i_wParam ) );
+			return 0;
+		}
+		if ( (pWindow != 0) && (i_Message == WM_LBUTTONDBLCLK) )
+		{
+			pWindow->ResetZoom();
+			return 0;
+		}
 
 		return DefWindowProcW( i_hWnd, i_Message, i_wParam, i_lParam );
 	}
 
-	void DrawPolylineSegment( HDC hdc, const vector<POINT>& i_Points, const COLORREF i_Color )
+	void OnMouseWheel( const short i_Delta )
 	{
-		if ( i_Points.size() < 2 )
-			return;
-
-		HPEN hPen = CreatePen( PS_SOLID, 2, i_Color );
-		HPEN hOldPen = reinterpret_cast<HPEN>( SelectObject( hdc, hPen ) );
-		Polyline( hdc, &i_Points[0], static_cast<int>( i_Points.size() ) );
-		SelectObject( hdc, hOldPen );
-		DeleteObject( hPen );
+		if ( i_Delta > 0 )
+			ZoomIn();
+		else if ( i_Delta < 0 )
+			ZoomOut();
 	}
 
-	void OnPaint()
+	void ApplyZoomFactor( const double i_Factor )
 	{
-		PAINTSTRUCT ps;
-		HDC hdc = BeginPaint( hWnd, &ps );
-
-		RECT client_rect;
-		GetClientRect( hWnd, &client_rect );
-		_FillSolidRect( hdc, client_rect, RGB( 255, 255, 255 ) );
-
-		const int left = 84;
-		const int right = 26;
-		const int top = 26;
-		const int bottom = 72;
-		RECT plot_rect = {left, top, client_rect.right - right, client_rect.bottom - bottom};
-		if ( plot_rect.right <= plot_rect.left || plot_rect.bottom <= plot_rect.top )
-		{
-			EndPaint( hWnd, &ps );
+		double x_min = 0.0;
+		double x_max = 0.0;
+		double y_min = 0.0;
+		double y_max = 0.0;
+		if ( !GetPlotBounds( &x_min, &x_max, &y_min, &y_max ) )
 			return;
+
+		if ( !bHasCustomView )
+		{
+			ViewXMin = x_min;
+			ViewXMax = x_max;
+			ViewYMin = y_min;
+			ViewYMax = y_max;
+			bHasCustomView = true;
 		}
+
+		const double x_center = (ViewXMin + ViewXMax) * 0.5;
+		const double x_half = max( 0.025, (ViewXMax - ViewXMin) * 0.5 * i_Factor );
+		ViewXMin = x_center - x_half;
+		ViewXMax = x_center + x_half;
+
+		const double log_y_min = log10( max( ViewYMin, 1e-12 ) );
+		const double log_y_max = log10( max( ViewYMax, ViewYMin * 1.01 ) );
+		const double log_center = (log_y_min + log_y_max) * 0.5;
+		const double log_half = max( 0.25, (log_y_max - log_y_min) * 0.5 * i_Factor );
+		ViewYMin = pow( 10.0, log_center - log_half );
+		ViewYMax = pow( 10.0, log_center + log_half );
+
+		if ( hWnd != 0 )
+			InvalidateRect( hWnd, 0, TRUE );
+	}
+
+	bool GetPlotBounds( double *pXMin, double *pXMax, double *pYMin, double *pYMax ) const
+	{
+		if ( pXMin == 0 || pXMax == 0 || pYMin == 0 || pYMax == 0 )
+			return false;
 
 		vector<vector<double>> times_by_channel( ChannelCount );
 		vector<vector<double>> values_by_channel( ChannelCount );
-
 		double x_min = -0.05;
 		double x_max = 0.05;
 		double y_min = 1.0;
@@ -715,6 +762,64 @@ private:
 			const double log_max = ceil( log10( max( y_max, y_min * 1.01 ) ) );
 			y_min = pow( 10.0, log_min );
 			y_max = pow( 10.0, max( log_max, log_min + 1.0 ) );
+		}
+
+		*pXMin = x_min;
+		*pXMax = x_max;
+		*pYMin = y_min;
+		*pYMax = y_max;
+		return true;
+	}
+
+	void DrawPolylineSegment( HDC hdc, const vector<POINT>& i_Points, const COLORREF i_Color )
+	{
+		if ( i_Points.size() < 2 )
+			return;
+
+		HPEN hPen = CreatePen( PS_SOLID, 2, i_Color );
+		HPEN hOldPen = reinterpret_cast<HPEN>( SelectObject( hdc, hPen ) );
+		Polyline( hdc, &i_Points[0], static_cast<int>( i_Points.size() ) );
+		SelectObject( hdc, hOldPen );
+		DeleteObject( hPen );
+	}
+
+	void OnPaint()
+	{
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint( hWnd, &ps );
+
+		RECT client_rect;
+		GetClientRect( hWnd, &client_rect );
+		_FillSolidRect( hdc, client_rect, RGB( 255, 255, 255 ) );
+
+		const int left = 84;
+		const int right = 26;
+		const int top = 26;
+		const int bottom = 72;
+		RECT plot_rect = {left, top, client_rect.right - right, client_rect.bottom - bottom};
+		if ( plot_rect.right <= plot_rect.left || plot_rect.bottom <= plot_rect.top )
+		{
+			EndPaint( hWnd, &ps );
+			return;
+		}
+
+		vector<vector<double>> times_by_channel( ChannelCount );
+		vector<vector<double>> values_by_channel( ChannelCount );
+		for ( int channel = 1; channel <= ChannelCount; channel++ )
+			if ( VisibleChannels[channel - 1] && pEngine != 0 )
+				pEngine->BuildPlotSeries( Snapshot, static_cast<BYTE>( channel ), &times_by_channel[channel - 1], &values_by_channel[channel - 1] );
+
+		double x_min = -0.05;
+		double x_max = 0.05;
+		double y_min = 1.0;
+		double y_max = 10.0;
+		GetPlotBounds( &x_min, &x_max, &y_min, &y_max );
+		if ( bHasCustomView )
+		{
+			x_min = ViewXMin;
+			x_max = ViewXMax;
+			y_min = max( 1e-12, ViewYMin );
+			y_max = max( y_min * 1.01, ViewYMax );
 		}
 
 		HPEN hBorderPen = CreatePen( PS_SOLID, 1, RGB( 80, 80, 80 ) );
@@ -783,6 +888,13 @@ private:
 					continue;
 				}
 
+				if ( (times_by_channel[channel - 1][i] < x_min) || (times_by_channel[channel - 1][i] > x_max) || (value < y_min) || (value > y_max) )
+				{
+					DrawPolylineSegment( hdc, segment, _PlotLineColor( channel - 1 ) );
+					segment.clear();
+					continue;
+				}
+
 				const double normalized_x = (times_by_channel[channel - 1][i] - x_min) / (x_max - x_min);
 				const double normalized_y = (log10( value ) - log10( y_min )) / (log10( y_max ) - log10( y_min ));
 
@@ -844,6 +956,11 @@ private:
 	PressureLoggerStateSnapshot Snapshot;
 	array<bool, 6> VisibleChannels;
 	int ChannelCount;
+	bool bHasCustomView;
+	double ViewXMin;
+	double ViewXMax;
+	double ViewYMin;
+	double ViewYMax;
 };
 
 
@@ -905,6 +1022,21 @@ public:
 	HWND Window() const
 	{
 		return hWnd;
+	}
+
+	void ResetZoom()
+	{
+		Plot.ResetZoom();
+	}
+
+	void ZoomIn()
+	{
+		Plot.ZoomIn();
+	}
+
+	void ZoomOut()
+	{
+		Plot.ZoomOut();
 	}
 
 private:
@@ -1175,6 +1307,11 @@ private:
 		ID_BUTTON_SET_CONTRAST,
 		ID_EDIT_SCREENSAVE,
 		ID_BUTTON_SET_SCREENSAVE,
+		ID_BUTTON_CLEAR_PLOT,
+		ID_BUTTON_PLOT_HOME,
+		ID_BUTTON_PLOT_ZOOM_OUT,
+		ID_BUTTON_PLOT_ZOOM_IN,
+		ID_BUTTON_DEBUG_INFO,
 		ID_BUTTON_EXTERNAL_PLOT,
 		ID_BUTTON_PLOT_CSV
 	};
@@ -1221,12 +1358,14 @@ private:
 	bool LoadCsvSnapshot( const wstring& i_Path, PressureLoggerStateSnapshot *pSnapshot );
 	void OpenExternalPlot();
 	void OpenCsvPlot();
+	void ShowDebugInfo();
 
 	void OnConnect();
 	void OnDisconnect();
 	void OnNewMeasurement();
 	void OnStartLogging();
 	void OnStopLogging();
+	void OnClearPlot();
 	void OnFactoryReset();
 	void OnSetUnit();
 	void OnGauge( const bool i_On );
@@ -1245,6 +1384,9 @@ private:
 	void OnSendRaw();
 	void OnBrowseCsv( const bool i_SaveDialog );
 	void OnPlotCsv();
+	void OnPlotResetZoom();
+	void OnPlotZoomIn();
+	void OnPlotZoomOut();
 	void OnToggleControlPanel();
 
 private:
@@ -1291,6 +1433,7 @@ private:
 	HWND hSendRawButton;
 	HWND hRawHelpButton;
 	HWND hToggleControlButton;
+	HWND hDebugInfoButton;
 
 	HWND hControlGroup;
 	vector<HWND> ControlPanelWindows;
@@ -1320,6 +1463,10 @@ private:
 	HWND hSetDigitsButton;
 	HWND hSetContrastButton;
 	HWND hSetScreensaveButton;
+	HWND hClearPlotButton;
+	HWND hPlotHomeButton;
+	HWND hPlotZoomOutButton;
+	HWND hPlotZoomInButton;
 
 	HWND hExternalPlotButton;
 	HWND hPlotCsvButton;
@@ -1368,6 +1515,7 @@ CMainWindow::CMainWindow()
 	hSendRawButton = 0;
 	hRawHelpButton = 0;
 	hToggleControlButton = 0;
+	hDebugInfoButton = 0;
 	hControlGroup = 0;
 	hControlChannelCombo = 0;
 	hUnitCombo = 0;
@@ -1395,6 +1543,10 @@ CMainWindow::CMainWindow()
 	hSetDigitsButton = 0;
 	hSetContrastButton = 0;
 	hSetScreensaveButton = 0;
+	hClearPlotButton = 0;
+	hPlotHomeButton = 0;
+	hPlotZoomOutButton = 0;
+	hPlotZoomInButton = 0;
 	hExternalPlotButton = 0;
 	hPlotCsvButton = 0;
 	bControlVisible = false;
@@ -1511,6 +1663,7 @@ LRESULT CMainWindow::HandleMessage( UINT i_Message, WPARAM i_wParam, LPARAM i_lP
 				case ID_BUTTON_SEND_RAW:		OnSendRaw(); return 0;
 				case ID_BUTTON_RAW_HELP:		ShowTextWindow( L"Hilfe: Rohkommandos", Engine.GetHelpText( "raw" ) ); return 0;
 				case ID_BUTTON_TOGGLE_CONTROL:	OnToggleControlPanel(); return 0;
+				case ID_BUTTON_DEBUG_INFO:		ShowDebugInfo(); return 0;
 				case ID_BUTTON_GAUGE_ON:		OnGauge( true ); return 0;
 				case ID_BUTTON_GAUGE_OFF:		OnGauge( false ); return 0;
 				case ID_BUTTON_READ_NOW:		OnReadNow(); return 0;
@@ -1529,6 +1682,10 @@ LRESULT CMainWindow::HandleMessage( UINT i_Message, WPARAM i_wParam, LPARAM i_lP
 				case ID_BUTTON_SET_SCREENSAVE:	OnSetScreensave(); return 0;
 				case ID_BUTTON_BROWSE_CSV:
 				case ID_BUTTON_BROWSE_CSV_ALT:	OnBrowseCsv( true ); return 0;
+				case ID_BUTTON_CLEAR_PLOT:		OnClearPlot(); return 0;
+				case ID_BUTTON_PLOT_HOME:		OnPlotResetZoom(); return 0;
+				case ID_BUTTON_PLOT_ZOOM_OUT:	OnPlotZoomOut(); return 0;
+				case ID_BUTTON_PLOT_ZOOM_IN:	OnPlotZoomIn(); return 0;
 				case ID_BUTTON_EXTERNAL_PLOT:	OpenExternalPlot(); return 0;
 				case ID_BUTTON_PLOT_CSV:		OnPlotCsv(); return 0;
 			}
@@ -1730,6 +1887,7 @@ void CMainWindow::CreateControls()
 		const wstring label = to_wstring( i + 1 );
 		PlotChecks[i] = CreateCheckbox( 150 + i * 44, 840, 40, 24, ID_CHECK_PLOT_1 + i, label.c_str() );
 	}
+	hDebugInfoButton = CreateButton( 430, 836, 138, 30, ID_BUTTON_DEBUG_INFO, L"Debug-Info" );
 
 	hMessagesLabel = CreateLabel( 16, 874, 100, 22, L"Meldungen" );
 	hMessagesEdit = CreateEdit( 10, 900, 820, 200, ID_EDIT_MESSAGES, L"", ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL );
@@ -1826,8 +1984,12 @@ void CMainWindow::CreateControls()
 
 	RECT plot_rect = {860, 50, 1840, 1190};
 	MainPlot.Create( hInstance, hWnd, plot_rect );
-	hExternalPlotButton = CreateButton( 860, 1200, 140, 30, ID_BUTTON_EXTERNAL_PLOT, L"Externer Plot" );
-	hPlotCsvButton = CreateButton( 1010, 1200, 120, 30, ID_BUTTON_PLOT_CSV, L"CSV plotten" );
+	hPlotHomeButton = CreateButton( 860, 1200, 80, 30, ID_BUTTON_PLOT_HOME, L"Home" );
+	hPlotZoomOutButton = CreateButton( 948, 1200, 42, 30, ID_BUTTON_PLOT_ZOOM_OUT, L"-" );
+	hPlotZoomInButton = CreateButton( 998, 1200, 42, 30, ID_BUTTON_PLOT_ZOOM_IN, L"+" );
+	hClearPlotButton = CreateButton( 1080, 1200, 110, 30, ID_BUTTON_CLEAR_PLOT, L"Plot leeren" );
+	hExternalPlotButton = CreateButton( 1200, 1200, 140, 30, ID_BUTTON_EXTERNAL_PLOT, L"Externer Plot" );
+	hPlotCsvButton = CreateButton( 1350, 1200, 120, 30, ID_BUTTON_PLOT_CSV, L"CSV plotten" );
 }
 
 
@@ -1888,8 +2050,16 @@ void CMainWindow::LayoutChildren()
 	const int bottom_buttons_y = client_rect.bottom - 44;
 	RECT plot_rect = {right_left, 50, max( right_left + 400, client_rect.right - right_margin ), max( 200, bottom_buttons_y - 14 )};
 	MainPlot.SetGeometry( plot_rect );
-	MoveWindow( hExternalPlotButton, right_left, bottom_buttons_y, 140, 30, TRUE );
-	MoveWindow( hPlotCsvButton, right_left + 150, bottom_buttons_y, 120, 30, TRUE );
+
+	int button_right = max( right_left + 420, client_rect.right - 20 );
+	MoveWindow( hPlotCsvButton, button_right - 120, bottom_buttons_y, 120, 30, TRUE );
+	button_right -= 130;
+	MoveWindow( hExternalPlotButton, button_right - 140, bottom_buttons_y, 140, 30, TRUE );
+	button_right -= 150;
+	MoveWindow( hClearPlotButton, button_right - 110, bottom_buttons_y, 110, 30, TRUE );
+	MoveWindow( hPlotZoomInButton, right_left + 138, bottom_buttons_y, 42, 30, TRUE );
+	MoveWindow( hPlotZoomOutButton, right_left + 88, bottom_buttons_y, 42, 30, TRUE );
+	MoveWindow( hPlotHomeButton, right_left, bottom_buttons_y, 80, 30, TRUE );
 
 	for ( size_t i = 0; i < ControlPanelWindows.size(); i++ )
 		ShowWindow( ControlPanelWindows[i], bControlVisible ? SW_SHOW : SW_HIDE );
@@ -2296,18 +2466,29 @@ void CMainWindow::UpdateUiFromState()
 	UpdateControlButtonsAvailability( CurrentSnapshot.bConnected );
 
 	ConnectionIndicator.SetColor( CurrentSnapshot.bConnected ? RGB(  46, 125,  50 ) : _IndicatorGray() );
-	MeasurementIndicator.SetColor( CurrentSnapshot.bMonitoring ? RGB(  46, 125,  50 ) : _IndicatorGray() );
-	CsvIndicator.SetColor( CurrentSnapshot.bLogging ? RGB(  46, 125,  50 ) : _IndicatorGray() );
+	MeasurementIndicator.SetColor( CurrentSnapshot.bFaulted ? RGB( 190,  40,  35 ) : (CurrentSnapshot.bMonitoring ? RGB(  46, 125,  50 ) : _IndicatorGray()) );
+	CsvIndicator.SetColor( (CurrentSnapshot.bFaulted && !CurrentSnapshot.sCsvPath.empty()) ? RGB( 190,  40,  35 ) : (CurrentSnapshot.bLogging ? RGB(  46, 125,  50 ) : _IndicatorGray()) );
 
 	if ( !CurrentSnapshot.bConnected )
 		SetWindowTextW( hMeasurementStatusLabel, L"Nicht verbunden" );
+	else if ( CurrentSnapshot.bFaulted )
+		SetWindowTextW( hMeasurementStatusLabel, L"Monitoringfehler" );
 	else if ( CurrentSnapshot.bLogging )
 		SetWindowTextW( hMeasurementStatusLabel, L"Logging laeuft" );
-	else
+	else if ( CurrentSnapshot.bMonitoring )
 		SetWindowTextW( hMeasurementStatusLabel, L"Monitoring laeuft" );
+	else
+		SetWindowTextW( hMeasurementStatusLabel, L"Bereit" );
 
 	SetWindowTextW( hSamplesLabel, (wstring( L"Sam " ) + to_wstring( CurrentSnapshot.dwSampleCount )).c_str() );
-	SetWindowTextW( hCsvStatusLabel, CurrentSnapshot.bLogging ? (wstring( L"Datei: " ) + _ToWide( CurrentSnapshot.sCsvPath )).c_str() : L"Datei: Keine Datei offen" );
+	if ( CurrentSnapshot.bLogging )
+		SetWindowTextW( hCsvStatusLabel, (wstring( L"Datei: " ) + _ToWide( CurrentSnapshot.sCsvPath )).c_str() );
+	else if ( CurrentSnapshot.bFaulted && !CurrentSnapshot.sCsvPath.empty() )
+		SetWindowTextW( hCsvStatusLabel, (wstring( L"Datei: " ) + _ToWide( CurrentSnapshot.sCsvPath ) + L" (nach Fehler geschlossen)").c_str() );
+	else if ( CurrentSnapshot.bMonitoring && _IsChecked( hLiveOnlyCheck ) )
+		SetWindowTextW( hCsvStatusLabel, L"Datei: Monitoring ohne Dateispeicherung" );
+	else
+		SetWindowTextW( hCsvStatusLabel, L"Datei: Keine Datei offen" );
 
 	for ( int i = 0; i < ActiveChannelCount(); i++ )
 	{
@@ -2358,6 +2539,23 @@ void CMainWindow::OpenCsvPlot()
 {
 	if ( CsvPlotWindow.CreateIfNeeded( hInstance, L"CSV-Plot" ) )
 		CsvPlotWindow.UpdateData( CsvSnapshot, &Engine, PlotVisible.data(), static_cast<int>( CsvSnapshot.CombinedChannelLabels.size() ) );
+}
+
+
+void CMainWindow::ShowDebugInfo()
+{
+	PressureLoggerStateSnapshot snapshot;
+	Engine.GetStateSnapshot( &snapshot );
+
+	stringstream report;
+	report << "Selected device: " << _ToUtf8( _TrimmedWindowText( hDeviceCombo ) ) << "\n";
+	report << "Selected port: " << ReadControlTextUtf8( hPortCombo ) << "\n";
+	report << "Live only: " << (_IsChecked( hLiveOnlyCheck ) ? "yes" : "no") << "\n";
+	report << "Long term: " << (_IsChecked( hLongTermCheck ) ? "yes" : "no") << "\n\n";
+	report << Engine.FormatLatestValues( snapshot ) << "\n\n";
+	report << "Recent samples\n";
+	report << Engine.FormatRecentSamples( snapshot, 8 );
+	ShowTextWindow( L"Debug-Info", report.str() );
 }
 
 
@@ -2431,6 +2629,14 @@ void CMainWindow::OnStartLogging()
 void CMainWindow::OnStopLogging()
 {
 	const DWORD error = Engine.StopLogging();
+	if ( error != EC_OK )
+		ShowError( error );
+}
+
+
+void CMainWindow::OnClearPlot()
+{
+	const DWORD error = Engine.ClearHistory();
 	if ( error != EC_OK )
 		ShowError( error );
 }
@@ -2578,7 +2784,7 @@ void CMainWindow::OnSetDisplayName()
 	if ( !ok )
 		return;
 
-	const DWORD error = Engine.SetChannelName( channel, ReadControlTextUtf8( hDisplayNameEdit ) );
+	const DWORD error = Engine.SetDisplayChannelName( ActiveDeviceTypeForUi(), channel, ReadControlTextUtf8( hDisplayNameEdit ) );
 	if ( error != EC_OK )
 	{
 		ShowError( error );
@@ -2658,6 +2864,30 @@ void CMainWindow::OnPlotCsv()
 		const wstring filename = (separator == wstring::npos) ? path : path.substr( separator + 1 );
 		SetWindowTextW( CsvPlotWindow.Window(), (wstring( L"CSV-Plot: " ) + filename).c_str() );
 	}
+}
+
+
+void CMainWindow::OnPlotResetZoom()
+{
+	MainPlot.ResetZoom();
+	ExternalPlotWindow.ResetZoom();
+	CsvPlotWindow.ResetZoom();
+}
+
+
+void CMainWindow::OnPlotZoomIn()
+{
+	MainPlot.ZoomIn();
+	ExternalPlotWindow.ZoomIn();
+	CsvPlotWindow.ZoomIn();
+}
+
+
+void CMainWindow::OnPlotZoomOut()
+{
+	MainPlot.ZoomOut();
+	ExternalPlotWindow.ZoomOut();
+	CsvPlotWindow.ZoomOut();
 }
 
 

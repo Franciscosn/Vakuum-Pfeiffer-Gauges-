@@ -36,9 +36,11 @@ struct HL_API PressureLoggerStateSnapshot
 	bool bConnected;
 	bool bMonitoring;
 	bool bLogging;
+	bool bFaulted;
 	DWORD dwSampleCount;
 	struct PressureLoggerConnectionSetup Setup;
 	std::string sCsvPath;
+	std::string sLastErrorText;
 	std::vector<std::string> DisplayChannelNames;
 	std::vector<std::string> CombinedChannelLabels;
 	std::vector<PressureChannelReading> LastChannels;
@@ -51,6 +53,7 @@ struct HL_API PressureLoggerStateSnapshot
 			bConnected = false;
 			bMonitoring = false;
 			bLogging = false;
+			bFaulted = false;
 			dwSampleCount = 0;
 		}
 	#endif
@@ -118,6 +121,7 @@ public:
 	DWORD SetCalibration( const BYTE i_Channel, const double i_Value );
 	DWORD SetFsr( const BYTE i_Channel, const int i_Value );
 	DWORD SetOfc( const BYTE i_Channel, const int i_Value );
+	DWORD SetDisplayChannelName( const enum PressureLoggerDeviceType i_DeviceType, const BYTE i_Channel, const std::string& i_Name );
 	DWORD SetChannelName( const BYTE i_Channel, const std::string& i_Name );
 	DWORD SetDigits( const int i_Value );
 	DWORD SetContrast( const int i_Value );
@@ -138,6 +142,7 @@ private:
 	void WriteCsvHeader();
 	void WriteCsvRow( const PressureSample& i_Sample );
 	size_t ChannelCountForDevice( const enum PressureLoggerDeviceType i_DeviceType ) const;
+	DWORD StoreDisplayChannelName( const enum PressureLoggerDeviceType i_DeviceType, const BYTE i_Channel, const std::string& i_Name, const bool i_AppendLog );
 	void EnsureDefaultDisplayNames();
 	void UpdateActiveDisplayLabelsLocked();
 	std::string NormalizeDisplayChannelName( const std::string& i_Name, const BYTE i_Channel ) const;

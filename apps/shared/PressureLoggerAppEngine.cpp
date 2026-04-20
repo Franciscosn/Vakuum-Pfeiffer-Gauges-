@@ -40,6 +40,24 @@ namespace
 
 		return i_Text.substr( begin, end - begin );
 	}
+
+
+	string _TimestampNow()
+	{
+		const auto current_time = chrono::system_clock::now();
+		time_t raw_time = chrono::system_clock::to_time_t( current_time );
+		struct tm time_data;
+
+		#ifdef MS_WIN
+			localtime_s( &time_data, &raw_time );
+		#else
+			localtime_r( &raw_time, &time_data );
+		#endif
+
+		stringstream stream;
+		stream << put_time( &time_data, "%Y-%m-%d %H:%M:%S" );
+		return stream.str();
+	}
 }
 
 
@@ -90,11 +108,20 @@ DWORD CPressureLoggerAppEngine::Connect( const PressureLoggerConnectionSetup i_S
 		State = PressureLoggerStateSnapshot();
 		State.bConnected = true;
 		State.bMonitoring = false;
+		State.bFaulted = false;
 		State.Setup = Setup;
+		State.sLastErrorText = "";
 		UpdateActiveDisplayLabelsLocked();
 	}
 
 	AppendLog( "[INFO] Connected to " + Setup.sPort + " using " + pDriver->GetDeviceName() );
+	{
+		stringstream stream;
+		stream << "[INFO] Setup: device=" << pDriver->GetDeviceName()
+			   << ", poll=" << fixed << setprecision( 3 ) << Setup.dPollingSeconds << " s"
+			   << ", long_term=" << (Setup.bTPG262LongTermMode ? "on" : "off");
+		AppendLog( stream.str() );
+	}
 
 	if ( const DWORD error = StartMonitorThread() )
 	{
@@ -121,9 +148,11 @@ DWORD CPressureLoggerAppEngine::Disconnect()
 	lock_guard<mutex> lock( StateMutex );
 	State.bConnected = false;
 	State.bMonitoring = false;
+	State.bFaulted = false;
 	State.LastChannels.clear();
 	State.Setup = PressureLoggerConnectionSetup();
 	State.Setup.DeviceType = LastDeviceType;
+	State.sLastErrorText = "";
 	UpdateActiveDisplayLabelsLocked();
 	return EC_OK;
 }
@@ -183,15 +212,27 @@ DWORD CPressureLoggerAppEngine::LoadUserConfig()
 			sLastPort = value;
 		else if ( key.rfind( "tpg262_name_", 0 ) == 0 )
 		{
-			const int index = stoi( key.substr( 12 ) );
-			if ( (index >= 1) && (index <= static_cast<int>( Tpg262DisplayNames.size() )) )
-				Tpg262DisplayNames[index - 1] = NormalizeDisplayChannelName( value, static_cast<BYTE>( index ) );
+			try
+			{
+				const int index = stoi( key.substr( 12 ) );
+				if ( (index >= 1) && (index <= static_cast<int>( Tpg262DisplayNames.size() )) )
+					Tpg262DisplayNames[index - 1] = NormalizeDisplayChannelName( value, static_cast<BYTE>( index ) );
+			}
+			catch ( ... )
+			{
+			}
 		}
 		else if ( key.rfind( "maxigauge_name_", 0 ) == 0 )
 		{
-			const int index = stoi( key.substr( 15 ) );
-			if ( (index >= 1) && (index <= static_cast<int>( MaxiGaugeDisplayNames.size() )) )
-				MaxiGaugeDisplayNames[index - 1] = NormalizeDisplayChannelName( value, static_cast<BYTE>( index ) );
+			try
+			{
+				const int index = stoi( key.substr( 15 ) );
+				if ( (index >= 1) && (index <= static_cast<int>( MaxiGaugeDisplayNames.size() )) )
+					MaxiGaugeDisplayNames[index - 1] = NormalizeDisplayChannelName( value, static_cast<BYTE>( index ) );
+			}
+			catch ( ... )
+			{
+			}
 		}
 	}
 
@@ -398,7 +439,12 @@ string CPressureLoggerAppEngine::FormatLatestValues( const PressureLoggerStateSn
 	stream << "Connection: " << (i_Snapshot.bConnected ? "connected" : "disconnected") << "\n";
 	stream << "Monitoring: " << (i_Snapshot.bMonitoring ? "running" : "stopped") << "\n";
 	stream << "Logging: " << (i_Snapshot.bLogging ? "active" : "off") << "\n";
+	stream << "Fault: " << (i_Snapshot.bFaulted ? "yes" : "no") << "\n";
 	stream << "Samples: " << i_Snapshot.dwSampleCount << "\n";
+	if ( !i_Snapshot.sCsvPath.empty() )
+		stream << "CSV: " << i_Snapshot.sCsvPath << "\n";
+	if ( !i_Snapshot.sLastErrorText.empty() )
+		stream << "Last error: " << i_Snapshot.sLastErrorText << "\n";
 
 	if ( i_Snapshot.LastChannels.empty() )
 	{
@@ -476,9 +522,16 @@ DWORD CPressureLoggerAppEngine::StartLogging( const string& i_CsvPath )
 	if ( CsvFile.is_open() )
 		StopLogging();
 
-	const filesystem::path path( csv_path );
-	if ( path.has_parent_path() )
-		filesystem::create_directories( path.parent_path() );
+	try
+	{
+		const filesystem::path path( csv_path );
+		if ( path.has_parent_path() )
+			filesystem::create_directories( path.parent_path() );
+	}
+	catch ( ... )
+	{
+		return PressureLoggerAppEngine_StartLogging | ES_Failure;
+	}
 
 	CsvFile.open( csv_path.c_str(), ios::out | ios::trunc );
 	if ( !CsvFile.is_open() )
@@ -489,6 +542,8 @@ DWORD CPressureLoggerAppEngine::StartLogging( const string& i_CsvPath )
 		lock_guard<mutex> lock( StateMutex );
 		State.bLogging = true;
 		State.sCsvPath = csv_path;
+		State.bFaulted = false;
+		State.sLastErrorText = "";
 	}
 
 	WriteCsvHeader();
@@ -707,26 +762,29 @@ DWORD CPressureLoggerAppEngine::SetOfc( const BYTE i_Channel, const int i_Value 
 }
 
 
+DWORD CPressureLoggerAppEngine::SetDisplayChannelName( const enum PressureLoggerDeviceType i_DeviceType, const BYTE i_Channel, const string& i_Name )
+{
+	return StoreDisplayChannelName( i_DeviceType, i_Channel, i_Name, true );
+}
+
+
 DWORD CPressureLoggerAppEngine::SetChannelName( const BYTE i_Channel, const string& i_Name )
 {
-	if ( i_Channel < 1 )
-		return PressureLoggerAppEngine_Command | ES_OutOfRange;
+	if ( pDriver.get() == 0 )
+		return PressureLoggerAppEngine_Command | ES_NotInitialized;
 
-	const enum PressureLoggerDeviceType device_type = GetConnected() ? Setup.DeviceType : LastDeviceType;
-	vector<string> *pTargetNames = (device_type == PressureLoggerDevice_MaxiGauge) ? &MaxiGaugeDisplayNames : &Tpg262DisplayNames;
-	if ( i_Channel > pTargetNames->size() )
-		return PressureLoggerAppEngine_Command | ES_OutOfRange;
+	const enum PressureLoggerDeviceType device_type = Setup.DeviceType;
+	const string normalized_name = NormalizeDisplayChannelName( i_Name, i_Channel );
+	const DWORD error = ExecuteDriverCommand(
+		PressureLoggerAppEngine_Command,
+		string( "[INFO] Geraetename gesetzt: Kanal " ) + to_string( static_cast<unsigned>( i_Channel ) ) + " -> " + normalized_name,
+		true,
+		[i_Channel, normalized_name]( CPfeifferGaugeDriver *pGaugeDriver ) { return pGaugeDriver->SetChannelName( i_Channel, normalized_name ); }
+	);
+	if ( error != EC_OK )
+		return error;
 
-	(*pTargetNames)[i_Channel - 1] = NormalizeDisplayChannelName( i_Name, i_Channel );
-	SaveUserConfig();
-
-	{
-		lock_guard<mutex> lock( StateMutex );
-		UpdateActiveDisplayLabelsLocked();
-	}
-
-	AppendLog( "[INFO] Anzeigename gesetzt: Kanal " + to_string( static_cast<unsigned>( i_Channel ) ) + " -> " + (*pTargetNames)[i_Channel - 1] );
-	return EC_OK;
+	return StoreDisplayChannelName( device_type, i_Channel, normalized_name, false );
 }
 
 
@@ -799,6 +857,8 @@ DWORD CPressureLoggerAppEngine::StartMonitorThread()
 
 	lock_guard<mutex> lock( StateMutex );
 	State.bMonitoring = true;
+	State.bFaulted = false;
+	State.sLastErrorText = "";
 	return EC_OK;
 }
 
@@ -827,9 +887,11 @@ DWORD CPressureLoggerAppEngine::ExecuteDriverCommand( const DWORD i_MethodCode,
 		return i_MethodCode | ES_NotInitialized;
 
 	bool was_monitoring = false;
+	bool was_logging = false;
 	{
 		lock_guard<mutex> lock( StateMutex );
 		was_monitoring = State.bMonitoring;
+		was_logging = State.bLogging;
 	}
 
 	if ( was_monitoring )
@@ -842,9 +904,28 @@ DWORD CPressureLoggerAppEngine::ExecuteDriverCommand( const DWORD i_MethodCode,
 		restart_error = StartMonitorThread();
 
 	if ( error != EC_OK )
+	{
+		const string error_text = GetLastErrorText( error );
+		AppendLog( "[ERR] " + error_text );
+		lock_guard<mutex> lock( StateMutex );
+		State.sLastErrorText = error_text;
 		return error;
+	}
 	if ( restart_error != EC_OK )
+	{
+		const string restart_text = GetLastErrorText( restart_error );
+		if ( CsvFile.is_open() )
+			CsvFile.close();
+		AppendLog( "[ERR] Monitoring restart failed: " + restart_text );
+		if ( was_logging )
+			AppendLog( "[WARN] Logging stopped due to monitoring restart error." );
+		lock_guard<mutex> lock( StateMutex );
+		State.bMonitoring = false;
+		State.bLogging = false;
+		State.bFaulted = true;
+		State.sLastErrorText = restart_text;
 		return restart_error;
+	}
 
 	if ( i_SuccessPrefix.length() != 0 )
 		AppendLog( i_SuccessPrefix );
@@ -866,9 +947,20 @@ void CPressureLoggerAppEngine::MonitorLoop()
 			if ( bStopRequested )
 				break;
 
-			AppendLog( "[ERR] " + GetLastErrorText( error ) );
+			const string error_text = GetLastErrorText( error );
+			const bool was_logging = CsvFile.is_open();
+			if ( CsvFile.is_open() )
+				CsvFile.close();
+
+			AppendLog( "[ERR] " + error_text );
+			if ( was_logging )
+				AppendLog( "[WARN] Logging stopped due to monitoring error." );
+
 			lock_guard<mutex> lock( StateMutex );
 			State.bMonitoring = false;
+			State.bLogging = false;
+			State.bFaulted = true;
+			State.sLastErrorText = error_text;
 			return;
 		}
 
@@ -900,7 +992,7 @@ void CPressureLoggerAppEngine::MonitorLoop()
 void CPressureLoggerAppEngine::AppendLog( const string& i_Line )
 {
 	lock_guard<mutex> lock( StateMutex );
-	State.LogLines.push_back( i_Line );
+	State.LogLines.push_back( _TimestampNow() + "  " + i_Line );
 	if ( State.LogLines.size() > PRESSURE_LOGGER_LOG_LIMIT )
 		State.LogLines.erase( State.LogLines.begin(), State.LogLines.begin() + (State.LogLines.size() - PRESSURE_LOGGER_LOG_LIMIT) );
 }
@@ -968,6 +1060,29 @@ void CPressureLoggerAppEngine::WriteCsvRow( const PressureSample& i_Sample )
 size_t CPressureLoggerAppEngine::ChannelCountForDevice( const enum PressureLoggerDeviceType i_DeviceType ) const
 {
 	return (i_DeviceType == PressureLoggerDevice_MaxiGauge) ? 6 : 2;
+}
+
+
+DWORD CPressureLoggerAppEngine::StoreDisplayChannelName( const enum PressureLoggerDeviceType i_DeviceType, const BYTE i_Channel, const string& i_Name, const bool i_AppendLog )
+{
+	if ( i_Channel < 1 )
+		return PressureLoggerAppEngine_Command | ES_OutOfRange;
+
+	vector<string> *pTargetNames = (i_DeviceType == PressureLoggerDevice_MaxiGauge) ? &MaxiGaugeDisplayNames : &Tpg262DisplayNames;
+	if ( i_Channel > pTargetNames->size() )
+		return PressureLoggerAppEngine_Command | ES_OutOfRange;
+
+	(*pTargetNames)[i_Channel - 1] = NormalizeDisplayChannelName( i_Name, i_Channel );
+	SaveUserConfig();
+
+	{
+		lock_guard<mutex> lock( StateMutex );
+		UpdateActiveDisplayLabelsLocked();
+	}
+
+	if ( i_AppendLog )
+		AppendLog( "[INFO] Anzeigename gesetzt: Kanal " + to_string( static_cast<unsigned>( i_Channel ) ) + " -> " + (*pTargetNames)[i_Channel - 1] );
+	return EC_OK;
 }
 
 
