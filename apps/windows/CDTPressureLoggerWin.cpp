@@ -1324,12 +1324,16 @@ private:
 	void ApplyFonts();
 	void ApplyDefaultValues();
 	void LayoutChildren();
+	void LayoutControlPanel( int i_Left, int i_Top, int i_Width );
 	void RefreshPorts();
 	void UpdateDeviceProfile();
 	void UpdateUiFromState();
 	void SyncDisplayNameField();
 	void ShowError( const DWORD i_ErrorCode );
 	void ShowTextWindow( const wchar_t *i_Title, const string& i_Text );
+	int MinimumClientWidth() const;
+	int MinimumClientHeight() const;
+	void EnsureMinimumClientSize();
 
 	HWND CreateGroup( int x, int y, int width, int height, const wchar_t *text );
 	HWND CreateLabel( int x, int y, int width, int height, const wchar_t *text, const bool i_Bold = false );
@@ -1400,23 +1404,32 @@ private:
 
 	HWND hTitleLabel;
 	HWND hConnectionGroup;
+	HWND hDeviceLabel;
 	HWND hDeviceCombo;
+	HWND hPortLabel;
 	HWND hPortCombo;
 	HWND hConnectButton;
 	HWND hDisconnectButton;
+	HWND hQuickDiagnoseButton;
 	HWND hRefreshPortsButton;
 	HWND hFactoryResetButton;
+	HWND hMeasurementLabel;
 	HWND hMeasurementStatusLabel;
 	HWND hSamplesLabel;
 	HWND hCsvStatusLabel;
+	HWND hIntervalLabel;
+	HWND hIntervalSuffixLabel;
 	HWND hIntervalCombo;
 	HWND hLongTermCheck;
 	HWND hLongTermEdit;
 	HWND hLiveOnlyCheck;
+	HWND hCsvLabel;
 	HWND hCsvEdit;
+	HWND hCsvBrowseButton;
 	HWND hStartLoggingButton;
 	HWND hStopLoggingButton;
 	HWND hNewMeasurementButton;
+	HWND hCsvBrowseAltButton;
 
 	CIndicatorWindow ConnectionIndicator;
 	CIndicatorWindow MeasurementIndicator;
@@ -1426,6 +1439,7 @@ private:
 	array<HWND, 6> PlotChecks;
 	array<bool, 6> PlotVisible;
 
+	HWND hPlotSelectionLabel;
 	HWND hMessagesLabel;
 	HWND hMessagesEdit;
 	HWND hRawGroup;
@@ -1437,6 +1451,16 @@ private:
 
 	HWND hControlGroup;
 	vector<HWND> ControlPanelWindows;
+	HWND hControlLabelChannel;
+	HWND hControlLabelUnit;
+	HWND hControlLabelFilter;
+	HWND hControlLabelCalibration;
+	HWND hControlLabelFsr;
+	HWND hControlLabelOfc;
+	HWND hControlLabelDisplayName;
+	HWND hControlLabelDigits;
+	HWND hControlLabelContrast;
+	HWND hControlLabelScreensave;
 	HWND hControlChannelCombo;
 	HWND hUnitCombo;
 	HWND hFilterCombo;
@@ -1491,23 +1515,33 @@ CMainWindow::CMainWindow()
 	hValueFont = 0;
 	hTitleLabel = 0;
 	hConnectionGroup = 0;
+	hDeviceLabel = 0;
 	hDeviceCombo = 0;
+	hPortLabel = 0;
 	hPortCombo = 0;
 	hConnectButton = 0;
 	hDisconnectButton = 0;
+	hQuickDiagnoseButton = 0;
 	hRefreshPortsButton = 0;
 	hFactoryResetButton = 0;
+	hMeasurementLabel = 0;
 	hMeasurementStatusLabel = 0;
 	hSamplesLabel = 0;
 	hCsvStatusLabel = 0;
+	hIntervalLabel = 0;
+	hIntervalSuffixLabel = 0;
 	hIntervalCombo = 0;
 	hLongTermCheck = 0;
 	hLongTermEdit = 0;
 	hLiveOnlyCheck = 0;
+	hCsvLabel = 0;
 	hCsvEdit = 0;
+	hCsvBrowseButton = 0;
 	hStartLoggingButton = 0;
 	hStopLoggingButton = 0;
 	hNewMeasurementButton = 0;
+	hCsvBrowseAltButton = 0;
+	hPlotSelectionLabel = 0;
 	hMessagesLabel = 0;
 	hMessagesEdit = 0;
 	hRawGroup = 0;
@@ -1517,6 +1551,16 @@ CMainWindow::CMainWindow()
 	hToggleControlButton = 0;
 	hDebugInfoButton = 0;
 	hControlGroup = 0;
+	hControlLabelChannel = 0;
+	hControlLabelUnit = 0;
+	hControlLabelFilter = 0;
+	hControlLabelCalibration = 0;
+	hControlLabelFsr = 0;
+	hControlLabelOfc = 0;
+	hControlLabelDisplayName = 0;
+	hControlLabelDigits = 0;
+	hControlLabelContrast = 0;
+	hControlLabelScreensave = 0;
 	hControlChannelCombo = 0;
 	hUnitCombo = 0;
 	hFilterCombo = 0;
@@ -1644,6 +1688,19 @@ LRESULT CMainWindow::HandleMessage( UINT i_Message, WPARAM i_wParam, LPARAM i_lP
 		case WM_SIZE:
 			LayoutChildren();
 			return 0;
+
+		case WM_GETMINMAXINFO:
+		{
+			MINMAXINFO *pInfo = reinterpret_cast<MINMAXINFO*>( i_lParam );
+			RECT min_rect = {0, 0, MinimumClientWidth(), MinimumClientHeight()};
+			AdjustWindowRectEx( &min_rect,
+								static_cast<DWORD>( GetWindowLongPtrW( hWnd, GWL_STYLE ) ),
+								GetMenu( hWnd ) != 0,
+								static_cast<DWORD>( GetWindowLongPtrW( hWnd, GWL_EXSTYLE ) ) );
+			pInfo->ptMinTrackSize.x = min_rect.right - min_rect.left;
+			pInfo->ptMinTrackSize.y = min_rect.bottom - min_rect.top;
+			return 0;
+		}
 
 		case WM_TIMER:
 			UpdateUiFromState();
@@ -1831,40 +1888,41 @@ HWND CMainWindow::CreateCombo( int x, int y, int width, int height, int controlI
 void CMainWindow::CreateControls()
 {
 	hTitleLabel = CreateLabel( 16, 12, 420, 32, L"CDT pressure logger", true );
-	hConnectionGroup = CreateGroup( 10, 48, 830, 208, L"Verbindung / Messung / Status" );
+	hConnectionGroup = CreateGroup( 10, 48, 830, 320, L"Verbindung / Messung / Status" );
 
-	CreateLabel( 28, 82, 60, 22, L"Geraet:" );
+	hDeviceLabel = CreateLabel( 28, 82, 60, 22, L"Geraet:" );
 	ConnectionIndicator.Create( hInstance, hWnd, RECT{230, 82, 248, 100} );
 	hDeviceCombo = CreateCombo( 292, 78, 200, 240, ID_COMBO_DEVICE );
-	CreateLabel( 516, 82, 38, 22, L"Port" );
+	hPortLabel = CreateLabel( 516, 82, 38, 22, L"Port" );
 	hPortCombo = CreateCombo( 560, 78, 222, 240, ID_COMBO_PORT, true );
 
 	hConnectButton = CreateButton( 28, 122, 170, 30, ID_BUTTON_CONNECT, L"Verbinden" );
 	hDisconnectButton = CreateButton( 206, 122, 110, 30, ID_BUTTON_DISCONNECT, L"Trennen" );
-	hNewMeasurementButton = CreateButton( 324, 122, 140, 30, ID_BUTTON_NEW_MEASUREMENT, L"Neu + Start" );
 	hRefreshPortsButton = CreateButton( 472, 122, 140, 30, ID_BUTTON_REFRESH_PORTS, L"Aktualisieren" );
-	hFactoryResetButton = CreateButton( 620, 122, 162, 30, ID_BUTTON_FACTORY_RESET, L"Werkreset" );
+	hQuickDiagnoseButton = CreateButton( 620, 122, 124, 30, ID_BUTTON_DIAGNOSE, L"Diagnose" );
+	hFactoryResetButton = CreateButton( 752, 122, 130, 30, ID_BUTTON_FACTORY_RESET, L"Werkreset" );
 
-	CreateLabel( 28, 166, 70, 22, L"Messung:" );
+	hMeasurementLabel = CreateLabel( 28, 166, 70, 22, L"Messung:" );
 	MeasurementIndicator.Create( hInstance, hWnd, RECT{230, 166, 248, 184} );
 	hMeasurementStatusLabel = CreateLabel( 292, 166, 220, 22, L"Nicht verbunden" );
 	hSamplesLabel = CreateLabel( 516, 166, 180, 22, L"Sam 0" );
 
 	hStartLoggingButton = CreateButton( 28, 200, 170, 30, ID_BUTTON_START_LOGGING, L"Logging starten" );
-	hStopLoggingButton = CreateButton( 206, 200, 170, 30, ID_BUTTON_STOP_LOGGING, L"Logging stoppen" );
-	hLiveOnlyCheck = CreateCheckbox( 396, 202, 300, 24, ID_CHECK_LIVE_ONLY, L"nur live anzeigen, nicht speichern" );
+	hNewMeasurementButton = CreateButton( 206, 200, 170, 30, ID_BUTTON_NEW_MEASUREMENT, L"Neue Datei + Start" );
+	hStopLoggingButton = CreateButton( 384, 200, 170, 30, ID_BUTTON_STOP_LOGGING, L"Logging stoppen" );
+	hLiveOnlyCheck = CreateCheckbox( 564, 202, 300, 24, ID_CHECK_LIVE_ONLY, L"nur live anzeigen, nicht speichern" );
 
-	CreateLabel( 28, 240, 128, 22, L"Continuous Mode" );
+	hIntervalLabel = CreateLabel( 28, 240, 128, 22, L"Continuous Mode" );
 	hIntervalCombo = CreateCombo( 158, 236, 112, 200, ID_COMBO_INTERVAL );
 	hLongTermCheck = CreateCheckbox( 284, 238, 130, 24, ID_CHECK_LONG_TERM, L"Langzeitmodus" );
 	hLongTermEdit = CreateEdit( 520, 236, 56, 26, ID_EDIT_LONG_TERM, L"60" );
-	CreateLabel( 584, 240, 160, 22, L"s (Standard 60)" );
+	hIntervalSuffixLabel = CreateLabel( 584, 240, 160, 22, L"s (Standard 60)" );
 
-	CreateLabel( 28, 274, 36, 22, L"CSV" );
+	hCsvLabel = CreateLabel( 28, 274, 36, 22, L"CSV" );
 	hCsvEdit = CreateEdit( 158, 270, 624, 26, ID_EDIT_CSV, L"" );
-	CreateButton( 790, 270, 30, 26, ID_BUTTON_BROWSE_CSV, L"..." );
+	hCsvBrowseButton = CreateButton( 790, 270, 30, 26, ID_BUTTON_BROWSE_CSV, L"..." );
 
-	CreateButton( 28, 306, 170, 30, ID_BUTTON_BROWSE_CSV_ALT, L"Durchsuchen" );
+	hCsvBrowseAltButton = CreateButton( 28, 306, 170, 30, ID_BUTTON_BROWSE_CSV_ALT, L"Durchsuchen" );
 	CsvIndicator.Create( hInstance, hWnd, RECT{230, 310, 248, 328} );
 	hCsvStatusLabel = CreateLabel( 292, 310, 500, 22, L"Datei: Keine Datei offen" );
 
@@ -1881,7 +1939,7 @@ void CMainWindow::CreateControls()
 		ChannelCards[i].Create( hInstance, hWnd, card_rect );
 	}
 
-	CreateLabel( 16, 842, 124, 22, L"Im Plot anzeigen:" );
+	hPlotSelectionLabel = CreateLabel( 16, 842, 124, 22, L"Im Plot anzeigen:" );
 	for ( int i = 0; i < 6; i++ )
 	{
 		const wstring label = to_wstring( i + 1 );
@@ -1900,45 +1958,45 @@ void CMainWindow::CreateControls()
 	hToggleControlButton = CreateButton( 10, 1200, 820, 30, ID_BUTTON_TOGGLE_CONTROL, L"Steuerung / Parameter einblenden" );
 	hControlGroup = CreateGroup( 10, 1238, 820, 332, L"Steuerung / Parameter" );
 
-	HWND hControlLabelChannel = CreateLabel( 28, 1270, 46, 22, L"Kanal" );
+	hControlLabelChannel = CreateLabel( 28, 1270, 46, 22, L"Kanal" );
 	hControlChannelCombo = CreateCombo( 80, 1266, 90, 180, ID_COMBO_CONTROL_CHANNEL );
 	hGaugeOnButton = CreateButton( 182, 1264, 118, 30, ID_BUTTON_GAUGE_ON, L"Gauge EIN" );
 	hGaugeOffButton = CreateButton( 310, 1264, 118, 30, ID_BUTTON_GAUGE_OFF, L"Gauge AUS" );
 	hReadNowButton = CreateButton( 438, 1264, 164, 30, ID_BUTTON_READ_NOW, L"Messwert jetzt lesen" );
 	hActivateVerifyButton = CreateButton( 612, 1264, 178, 30, ID_BUTTON_ACTIVATE_VERIFY, L"Aktivieren + pruefen" );
 
-	HWND hControlLabelUnit = CreateLabel( 28, 1310, 52, 22, L"Einheit" );
+	hControlLabelUnit = CreateLabel( 28, 1310, 52, 22, L"Einheit" );
 	hUnitCombo = CreateCombo( 84, 1306, 110, 160, ID_COMBO_UNIT );
 	hSetUnitButton = CreateButton( 204, 1304, 110, 30, ID_BUTTON_SET_UNIT, L"Einheit setzen" );
 	hDegasOnButton = CreateButton( 324, 1304, 118, 30, ID_BUTTON_DEGAS_ON, L"Degas EIN" );
 	hDegasOffButton = CreateButton( 452, 1304, 118, 30, ID_BUTTON_DEGAS_OFF, L"Degas AUS" );
 	hDiagnoseButton = CreateButton( 612, 1304, 178, 30, ID_BUTTON_DIAGNOSE, L"Diagnose" );
 
-	HWND hControlLabelFilter = CreateLabel( 28, 1350, 42, 22, L"Filter" );
+	hControlLabelFilter = CreateLabel( 28, 1350, 42, 22, L"Filter" );
 	hFilterCombo = CreateCombo( 84, 1346, 110, 160, ID_COMBO_FILTER );
 	hSetFilterButton = CreateButton( 204, 1344, 110, 30, ID_BUTTON_SET_FILTER, L"Filter setzen" );
-	HWND hControlLabelCalibration = CreateLabel( 328, 1350, 88, 22, L"Kalibrierfaktor" );
+	hControlLabelCalibration = CreateLabel( 328, 1350, 88, 22, L"Kalibrierfaktor" );
 	hCalibrationEdit = CreateEdit( 420, 1346, 90, 26, ID_EDIT_CALIBRATION, L"1.000" );
 	hSetCalibrationButton = CreateButton( 520, 1344, 110, 30, ID_BUTTON_SET_CALIBRATION, L"CAL setzen" );
 
-	HWND hControlLabelFsr = CreateLabel( 28, 1390, 34, 22, L"FSR" );
+	hControlLabelFsr = CreateLabel( 28, 1390, 34, 22, L"FSR" );
 	hFsrCombo = CreateCombo( 84, 1386, 150, 220, ID_COMBO_FSR );
 	hSetFsrButton = CreateButton( 244, 1384, 110, 30, ID_BUTTON_SET_FSR, L"FSR setzen" );
-	HWND hControlLabelOfc = CreateLabel( 372, 1390, 34, 22, L"OFC" );
+	hControlLabelOfc = CreateLabel( 372, 1390, 34, 22, L"OFC" );
 	hOfcCombo = CreateCombo( 414, 1386, 110, 180, ID_COMBO_OFC );
 	hSetOfcButton = CreateButton( 534, 1384, 110, 30, ID_BUTTON_SET_OFC, L"OFC setzen" );
 
-	HWND hControlLabelDisplayName = CreateLabel( 28, 1430, 90, 22, L"Anzeigename" );
+	hControlLabelDisplayName = CreateLabel( 28, 1430, 90, 22, L"Anzeigename" );
 	hDisplayNameEdit = CreateEdit( 124, 1426, 140, 26, ID_EDIT_DISPLAY_NAME, L"Kanal 1" );
 	hSetDisplayNameButton = CreateButton( 274, 1424, 128, 30, ID_BUTTON_SET_DISPLAY_NAME, L"Namen speichern" );
-	HWND hControlLabelDigits = CreateLabel( 420, 1430, 40, 22, L"Digits" );
+	hControlLabelDigits = CreateLabel( 420, 1430, 40, 22, L"Digits" );
 	hDigitsCombo = CreateCombo( 466, 1426, 90, 160, ID_COMBO_DIGITS );
 	hSetDigitsButton = CreateButton( 566, 1424, 90, 30, ID_BUTTON_SET_DIGITS, L"Setzen" );
 
-	HWND hControlLabelContrast = CreateLabel( 28, 1470, 54, 22, L"Contrast" );
+	hControlLabelContrast = CreateLabel( 28, 1470, 54, 22, L"Contrast" );
 	hContrastEdit = CreateEdit( 90, 1466, 70, 26, ID_EDIT_CONTRAST, L"10" );
 	hSetContrastButton = CreateButton( 170, 1464, 110, 30, ID_BUTTON_SET_CONTRAST, L"Contrast" );
-	HWND hControlLabelScreensave = CreateLabel( 300, 1470, 92, 22, L"Screensave [h]" );
+	hControlLabelScreensave = CreateLabel( 300, 1470, 92, 22, L"Screensave [h]" );
 	hScreensaveEdit = CreateEdit( 398, 1466, 70, 26, ID_EDIT_SCREENSAVE, L"0" );
 	hSetScreensaveButton = CreateButton( 478, 1464, 122, 30, ID_BUTTON_SET_SCREENSAVE, L"Screensave" );
 
@@ -2040,15 +2098,327 @@ void CMainWindow::ApplyDefaultValues()
 }
 
 
+int CMainWindow::MinimumClientWidth() const
+{
+	return 1420;
+}
+
+
+int CMainWindow::MinimumClientHeight() const
+{
+	const int channel_rows = max( 1, (ActiveChannelCount() + 1) / 2 );
+	const int connection_group_height = 404;
+	const int card_height = 138;
+	const int card_gap_y = 12;
+	const int cards_bottom = 48 + connection_group_height + 18 + channel_rows * card_height + max( 0, channel_rows - 1 ) * card_gap_y;
+	const int plot_selector_bottom = cards_bottom + 76;
+	const int min_messages_height = (ActiveChannelCount() > 2) ? 96 : (bControlVisible ? 110 : 150);
+	const int control_height = 294;
+
+	int total = plot_selector_bottom + 26 + min_messages_height + 12 + 78 + 10 + 30 + 18;
+	if ( bControlVisible )
+		total += 10 + control_height;
+
+	return total;
+}
+
+
+void CMainWindow::EnsureMinimumClientSize()
+{
+	if ( hWnd == 0 )
+		return;
+
+	RECT client_rect;
+	GetClientRect( hWnd, &client_rect );
+
+	const int required_client_width = MinimumClientWidth();
+	const int required_client_height = MinimumClientHeight();
+	if ( (client_rect.right >= required_client_width) && (client_rect.bottom >= required_client_height) )
+		return;
+
+	RECT window_rect = {0, 0, max( client_rect.right, required_client_width ), max( client_rect.bottom, required_client_height )};
+	AdjustWindowRectEx( &window_rect,
+						static_cast<DWORD>( GetWindowLongPtrW( hWnd, GWL_STYLE ) ),
+						GetMenu( hWnd ) != 0,
+						static_cast<DWORD>( GetWindowLongPtrW( hWnd, GWL_EXSTYLE ) ) );
+
+	SetWindowPos( hWnd,
+				  0,
+				  0,
+				  0,
+				  window_rect.right - window_rect.left,
+				  window_rect.bottom - window_rect.top,
+				  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE );
+}
+
+
+void CMainWindow::LayoutControlPanel( int i_Left, int i_Top, int i_Width )
+{
+	const int inner_left = i_Left + 18;
+	const int inner_right = i_Left + i_Width - 18;
+	const int gap = 10;
+	const int row1 = i_Top + 32;
+	const int row2 = row1 + 40;
+	const int row3 = row2 + 40;
+	const int row4 = row3 + 40;
+	const int row5 = row4 + 40;
+	const int row6 = row5 + 40;
+
+	MoveWindow( hControlGroup, i_Left, i_Top, i_Width, 294, TRUE );
+
+	MoveWindow( hControlLabelChannel, inner_left, row1 + 4, 46, 22, TRUE );
+	MoveWindow( hControlChannelCombo, inner_left + 52, row1, 82, 220, TRUE );
+
+	int x = inner_left + 144;
+	const int gauge_width = 94;
+	const int read_now_width = 144;
+	const int remaining_row1 = max( 120, inner_right - x - (gauge_width * 2 + read_now_width + gap * 3) );
+	MoveWindow( hGaugeOnButton, x, row1 - 2, gauge_width, 30, TRUE );
+	x += gauge_width + gap;
+	MoveWindow( hGaugeOffButton, x, row1 - 2, gauge_width, 30, TRUE );
+	x += gauge_width + gap;
+	MoveWindow( hReadNowButton, x, row1 - 2, read_now_width, 30, TRUE );
+	x += read_now_width + gap;
+	MoveWindow( hActivateVerifyButton, x, row1 - 2, remaining_row1, 30, TRUE );
+
+	MoveWindow( hControlLabelUnit, inner_left, row2 + 4, 52, 22, TRUE );
+	MoveWindow( hUnitCombo, inner_left + 58, row2, 96, 180, TRUE );
+	MoveWindow( hSetUnitButton, inner_left + 164, row2 - 2, 108, 30, TRUE );
+	MoveWindow( hDegasOnButton, inner_left + 282, row2 - 2, 96, 30, TRUE );
+	MoveWindow( hDegasOffButton, inner_left + 388, row2 - 2, 96, 30, TRUE );
+	MoveWindow( hDiagnoseButton, inner_left + 494, row2 - 2, max( 120, inner_right - (inner_left + 494) ), 30, TRUE );
+
+	MoveWindow( hControlLabelFilter, inner_left, row3 + 4, 42, 22, TRUE );
+	MoveWindow( hFilterCombo, inner_left + 48, row3, 108, 180, TRUE );
+	MoveWindow( hSetFilterButton, inner_left + 166, row3 - 2, 110, 30, TRUE );
+	MoveWindow( hControlLabelCalibration, inner_left + 292, row3 + 4, 88, 22, TRUE );
+	MoveWindow( hCalibrationEdit, inner_left + 384, row3, 84, 26, TRUE );
+	MoveWindow( hSetCalibrationButton, inner_left + 478, row3 - 2, max( 110, inner_right - (inner_left + 478) ), 30, TRUE );
+
+	MoveWindow( hControlLabelFsr, inner_left, row4 + 4, 34, 22, TRUE );
+	MoveWindow( hFsrCombo, inner_left + 40, row4, 144, 220, TRUE );
+	MoveWindow( hSetFsrButton, inner_left + 194, row4 - 2, 108, 30, TRUE );
+	MoveWindow( hControlLabelOfc, inner_left + 320, row4 + 4, 34, 22, TRUE );
+	MoveWindow( hOfcCombo, inner_left + 360, row4, 100, 180, TRUE );
+	MoveWindow( hSetOfcButton, inner_left + 470, row4 - 2, max( 110, inner_right - (inner_left + 470) ), 30, TRUE );
+
+	const int digits_block_width = 220;
+	const int name_block_right = inner_right - digits_block_width - 16;
+	MoveWindow( hControlLabelDisplayName, inner_left, row5 + 4, 90, 22, TRUE );
+	MoveWindow( hDisplayNameEdit, inner_left + 96, row5, max( 120, name_block_right - (inner_left + 96) - 136 ), 26, TRUE );
+	MoveWindow( hSetDisplayNameButton, name_block_right - 128, row5 - 2, 128, 30, TRUE );
+	MoveWindow( hControlLabelDigits, inner_right - digits_block_width, row5 + 4, 40, 22, TRUE );
+	MoveWindow( hDigitsCombo, inner_right - digits_block_width + 46, row5, 74, 180, TRUE );
+	MoveWindow( hSetDigitsButton, inner_right - 92, row5 - 2, 92, 30, TRUE );
+
+	MoveWindow( hControlLabelContrast, inner_left, row6 + 4, 54, 22, TRUE );
+	MoveWindow( hContrastEdit, inner_left + 62, row6, 68, 26, TRUE );
+	MoveWindow( hSetContrastButton, inner_left + 140, row6 - 2, 104, 30, TRUE );
+	MoveWindow( hControlLabelScreensave, inner_left + 272, row6 + 4, 92, 22, TRUE );
+	MoveWindow( hScreensaveEdit, inner_left + 370, row6, 68, 26, TRUE );
+	MoveWindow( hSetScreensaveButton, inner_left + 448, row6 - 2, max( 118, inner_right - (inner_left + 448) ), 30, TRUE );
+}
+
+
 void CMainWindow::LayoutChildren()
 {
 	RECT client_rect;
 	GetClientRect( hWnd, &client_rect );
 
-	const int right_left = 860;
+	const int outer_margin = 10;
 	const int right_margin = 20;
+	const int split_gap = 28;
+	const int plot_min_width = 660;
+	const int left_min_width = 720;
+	const int left_max_width = 980;
+	const int total_width = max( 0, client_rect.right - outer_margin * 2 - split_gap );
+
+	int left_width = min( left_max_width, max( left_min_width, (total_width * 40) / 100 ) );
+	if ( (total_width - left_width) < plot_min_width )
+		left_width = max( left_min_width, total_width - plot_min_width );
+	left_width = min( left_width, max( left_min_width, total_width - 520 ) );
+
+	const int left_x = outer_margin;
+	const int right_left = left_x + left_width + split_gap;
+	const int right_width = max( 520, client_rect.right - right_left - right_margin );
+	const bool compact = (left_width < 860);
+
+	MoveWindow( hTitleLabel, 16, 12, left_width, 32, TRUE );
+
+	const int connection_group_top = 48;
+	const int connection_group_height = compact ? 404 : 308;
+	const int connection_inner_left = left_x + 18;
+	const int connection_inner_right = left_x + left_width - 18;
+	MoveWindow( hConnectionGroup, left_x, connection_group_top, left_width, connection_group_height, TRUE );
+
+	if ( compact )
+	{
+		const int row_device = connection_group_top + 34;
+		const int row_port = connection_group_top + 72;
+		const int row_buttons1 = connection_group_top + 110;
+		const int row_buttons2 = connection_group_top + 148;
+		const int row_measure = connection_group_top + 186;
+		const int row_logging = connection_group_top + 224;
+		const int row_live = connection_group_top + 262;
+		const int row_interval = connection_group_top + 298;
+		const int row_csv = connection_group_top + 334;
+		const int row_browse = connection_group_top + 370;
+
+		MoveWindow( hDeviceLabel, connection_inner_left, row_device + 4, 60, 22, TRUE );
+		MoveWindow( ConnectionIndicator.Window(), connection_inner_left + 74, row_device + 3, 18, 18, TRUE );
+		MoveWindow( hDeviceCombo, connection_inner_left + 104, row_device, connection_inner_right - (connection_inner_left + 104), 240, TRUE );
+
+		MoveWindow( hPortLabel, connection_inner_left, row_port + 4, 38, 22, TRUE );
+		MoveWindow( hPortCombo, connection_inner_left + 48, row_port, connection_inner_right - (connection_inner_left + 48), 240, TRUE );
+
+		const int button_gap = 10;
+		const int top_row_width = (connection_inner_right - connection_inner_left - button_gap * 2) / 3;
+		MoveWindow( hConnectButton, connection_inner_left, row_buttons1, top_row_width, 30, TRUE );
+		MoveWindow( hDisconnectButton, connection_inner_left + top_row_width + button_gap, row_buttons1, top_row_width, 30, TRUE );
+		MoveWindow( hRefreshPortsButton, connection_inner_left + (top_row_width + button_gap) * 2, row_buttons1, connection_inner_right - (connection_inner_left + (top_row_width + button_gap) * 2), 30, TRUE );
+
+		const int second_row_width = (connection_inner_right - connection_inner_left - button_gap) / 2;
+		MoveWindow( hQuickDiagnoseButton, connection_inner_left, row_buttons2, second_row_width, 30, TRUE );
+		MoveWindow( hFactoryResetButton, connection_inner_left + second_row_width + button_gap, row_buttons2, connection_inner_right - (connection_inner_left + second_row_width + button_gap), 30, TRUE );
+
+		MoveWindow( hMeasurementLabel, connection_inner_left, row_measure + 4, 70, 22, TRUE );
+		MoveWindow( MeasurementIndicator.Window(), connection_inner_left + 74, row_measure + 3, 18, 18, TRUE );
+		MoveWindow( hMeasurementStatusLabel, connection_inner_left + 104, row_measure + 2, max( 160, connection_inner_right - (connection_inner_left + 104) - 106 ), 22, TRUE );
+		MoveWindow( hSamplesLabel, connection_inner_right - 96, row_measure + 2, 96, 22, TRUE );
+
+		const int logging_button_width = (connection_inner_right - connection_inner_left - button_gap * 2) / 3;
+		MoveWindow( hStartLoggingButton, connection_inner_left, row_logging, logging_button_width, 30, TRUE );
+		MoveWindow( hNewMeasurementButton, connection_inner_left + logging_button_width + button_gap, row_logging, logging_button_width, 30, TRUE );
+		MoveWindow( hStopLoggingButton, connection_inner_left + (logging_button_width + button_gap) * 2, row_logging, connection_inner_right - (connection_inner_left + (logging_button_width + button_gap) * 2), 30, TRUE );
+
+		MoveWindow( hLiveOnlyCheck, connection_inner_left, row_live, connection_inner_right - connection_inner_left, 24, TRUE );
+
+		MoveWindow( hIntervalLabel, connection_inner_left, row_interval + 4, 128, 22, TRUE );
+		MoveWindow( hIntervalCombo, connection_inner_left + 136, row_interval, 98, 240, TRUE );
+		MoveWindow( hLongTermCheck, connection_inner_left + 248, row_interval + 2, 130, 24, TRUE );
+		MoveWindow( hLongTermEdit, connection_inner_left + 386, row_interval, 56, 26, TRUE );
+		MoveWindow( hIntervalSuffixLabel, connection_inner_left + 452, row_interval + 4, connection_inner_right - (connection_inner_left + 452), 22, TRUE );
+
+		MoveWindow( hCsvLabel, connection_inner_left, row_csv + 4, 36, 22, TRUE );
+		MoveWindow( hCsvEdit, connection_inner_left + 46, row_csv, connection_inner_right - (connection_inner_left + 46) - 38, 26, TRUE );
+		MoveWindow( hCsvBrowseButton, connection_inner_right - 30, row_csv, 30, 26, TRUE );
+
+		MoveWindow( hCsvBrowseAltButton, connection_inner_left, row_browse, 170, 30, TRUE );
+		MoveWindow( CsvIndicator.Window(), connection_inner_left + 184, row_browse + 6, 18, 18, TRUE );
+		MoveWindow( hCsvStatusLabel, connection_inner_left + 214, row_browse + 4, connection_inner_right - (connection_inner_left + 214), 22, TRUE );
+	}
+	else
+	{
+		const int row_device = connection_group_top + 34;
+		const int row_buttons = connection_group_top + 72;
+		const int row_measure = connection_group_top + 116;
+		const int row_logging = connection_group_top + 152;
+		const int row_interval = connection_group_top + 190;
+		const int row_csv = connection_group_top + 228;
+		const int row_browse = connection_group_top + 264;
+
+		MoveWindow( hDeviceLabel, connection_inner_left, row_device + 4, 60, 22, TRUE );
+		MoveWindow( ConnectionIndicator.Window(), connection_inner_left + 74, row_device + 3, 18, 18, TRUE );
+		MoveWindow( hPortCombo, connection_inner_right - 230, row_device, 230, 240, TRUE );
+		MoveWindow( hPortLabel, connection_inner_right - 272, row_device + 4, 36, 22, TRUE );
+		MoveWindow( hDeviceCombo, connection_inner_left + 104, row_device, max( 220, connection_inner_right - (connection_inner_left + 104) - 284 ), 240, TRUE );
+
+		const int button_gap = 10;
+		const int action_width = (connection_inner_right - connection_inner_left - button_gap * 4) / 5;
+		MoveWindow( hConnectButton, connection_inner_left, row_buttons, action_width, 30, TRUE );
+		MoveWindow( hDisconnectButton, connection_inner_left + (action_width + button_gap), row_buttons, action_width, 30, TRUE );
+		MoveWindow( hRefreshPortsButton, connection_inner_left + (action_width + button_gap) * 2, row_buttons, action_width, 30, TRUE );
+		MoveWindow( hQuickDiagnoseButton, connection_inner_left + (action_width + button_gap) * 3, row_buttons, action_width, 30, TRUE );
+		MoveWindow( hFactoryResetButton, connection_inner_left + (action_width + button_gap) * 4, row_buttons, connection_inner_right - (connection_inner_left + (action_width + button_gap) * 4), 30, TRUE );
+
+		MoveWindow( hMeasurementLabel, connection_inner_left, row_measure + 4, 70, 22, TRUE );
+		MoveWindow( MeasurementIndicator.Window(), connection_inner_left + 74, row_measure + 3, 18, 18, TRUE );
+		MoveWindow( hMeasurementStatusLabel, connection_inner_left + 104, row_measure + 2, max( 180, connection_inner_right - (connection_inner_left + 104) - 120 ), 22, TRUE );
+		MoveWindow( hSamplesLabel, connection_inner_right - 110, row_measure + 2, 110, 22, TRUE );
+
+		const int live_only_width = 300;
+		const int logging_button_width = (connection_inner_right - connection_inner_left - live_only_width - button_gap * 3) / 3;
+		MoveWindow( hStartLoggingButton, connection_inner_left, row_logging, logging_button_width, 30, TRUE );
+		MoveWindow( hNewMeasurementButton, connection_inner_left + logging_button_width + button_gap, row_logging, logging_button_width, 30, TRUE );
+		MoveWindow( hStopLoggingButton, connection_inner_left + (logging_button_width + button_gap) * 2, row_logging, logging_button_width, 30, TRUE );
+		MoveWindow( hLiveOnlyCheck, connection_inner_right - live_only_width, row_logging + 2, live_only_width, 24, TRUE );
+
+		MoveWindow( hIntervalLabel, connection_inner_left, row_interval + 4, 128, 22, TRUE );
+		MoveWindow( hIntervalCombo, connection_inner_left + 136, row_interval, 106, 240, TRUE );
+		MoveWindow( hLongTermCheck, connection_inner_left + 252, row_interval + 2, 130, 24, TRUE );
+		MoveWindow( hLongTermEdit, connection_inner_right - 174, row_interval, 56, 26, TRUE );
+		MoveWindow( hIntervalSuffixLabel, connection_inner_right - 110, row_interval + 4, 110, 22, TRUE );
+
+		MoveWindow( hCsvLabel, connection_inner_left, row_csv + 4, 36, 22, TRUE );
+		MoveWindow( hCsvEdit, connection_inner_left + 46, row_csv, connection_inner_right - (connection_inner_left + 46) - 38, 26, TRUE );
+		MoveWindow( hCsvBrowseButton, connection_inner_right - 30, row_csv, 30, 26, TRUE );
+
+		MoveWindow( hCsvBrowseAltButton, connection_inner_left, row_browse, 170, 30, TRUE );
+		MoveWindow( CsvIndicator.Window(), connection_inner_left + 184, row_browse + 6, 18, 18, TRUE );
+		MoveWindow( hCsvStatusLabel, connection_inner_left + 214, row_browse + 4, connection_inner_right - (connection_inner_left + 214), 22, TRUE );
+	}
+
+	const int card_top = connection_group_top + connection_group_height + 18;
+	const int card_gap_x = 14;
+	const int card_gap_y = 12;
+	const int card_height = 138;
+	const int card_width = max( 320, (left_width - card_gap_x - 4) / 2 );
+	const int active_cards = ActiveChannelCount();
+	for ( int i = 0; i < active_cards; i++ )
+	{
+		const int row = i / 2;
+		const int col = i % 2;
+		RECT card_rect;
+		card_rect.left = left_x + 2 + col * (card_width + card_gap_x);
+		card_rect.top = card_top + row * (card_height + card_gap_y);
+		card_rect.right = card_rect.left + card_width;
+		card_rect.bottom = card_rect.top + card_height;
+		ChannelCards[i].SetGeometry( card_rect );
+	}
+
+	const int cards_bottom = card_top + max( 1, (active_cards + 1) / 2 ) * card_height + max( 0, (active_cards + 1) / 2 - 1 ) * card_gap_y;
+	const int plot_selection_y = cards_bottom + 18;
+	MoveWindow( hPlotSelectionLabel, left_x + 6, plot_selection_y + 2, 124, 22, TRUE );
+	for ( int i = 0; i < 6; i++ )
+		MoveWindow( PlotChecks[i], left_x + 140 + i * 38, plot_selection_y, 34, 24, TRUE );
+
+	const int debug_button_y = compact ? (plot_selection_y + 30) : (plot_selection_y - 2);
+	MoveWindow( hDebugInfoButton, left_x + left_width - 136, debug_button_y, 126, 30, TRUE );
+
+	const int messages_label_y = compact ? (plot_selection_y + 64) : (plot_selection_y + 36);
+	MoveWindow( hMessagesLabel, left_x + 6, messages_label_y, 100, 22, TRUE );
+
+	const int control_height = 294;
+	int bottom_cursor = client_rect.bottom - 18;
+	if ( bControlVisible )
+	{
+		const int control_top = bottom_cursor - control_height;
+		LayoutControlPanel( left_x, control_top, left_width );
+		bottom_cursor = control_top - 10;
+	}
+	else
+	{
+		MoveWindow( hControlGroup, left_x, bottom_cursor - control_height, left_width, control_height, TRUE );
+	}
+
+	const int toggle_top = bottom_cursor - 30;
+	MoveWindow( hToggleControlButton, left_x, toggle_top, left_width, 30, TRUE );
+	bottom_cursor = toggle_top - 10;
+
+	const int raw_group_height = 78;
+	const int raw_top = bottom_cursor - raw_group_height;
+	MoveWindow( hRawGroup, left_x, raw_top, left_width, raw_group_height, TRUE );
+	MoveWindow( hRawEdit, left_x + 18, raw_top + 28, left_width - 18 - 196 - 64 - 24, 26, TRUE );
+	MoveWindow( hSendRawButton, left_x + left_width - 196 - 64 - 12, raw_top + 26, 196, 30, TRUE );
+	MoveWindow( hRawHelpButton, left_x + left_width - 64, raw_top + 26, 54, 30, TRUE );
+	bottom_cursor = raw_top - 12;
+
+	const int messages_edit_top = messages_label_y + 26;
+	const int messages_height = max( 84, bottom_cursor - messages_edit_top );
+	MoveWindow( hMessagesEdit, left_x, messages_edit_top, left_width, messages_height, TRUE );
+
 	const int bottom_buttons_y = client_rect.bottom - 44;
-	RECT plot_rect = {right_left, 50, max( right_left + 400, client_rect.right - right_margin ), max( 200, bottom_buttons_y - 14 )};
+	RECT plot_rect = {right_left, 50, right_left + right_width, max( 220, bottom_buttons_y - 14 )};
 	MainPlot.SetGeometry( plot_rect );
 
 	int button_right = max( right_left + 420, client_rect.right - 20 );
@@ -2283,6 +2653,7 @@ void CMainWindow::UpdateControlButtonsAvailability( const bool i_Connected )
 	EnableWindow( hDeviceCombo, !i_Connected );
 	EnableWindow( hPortCombo, !i_Connected );
 	EnableWindow( hRefreshPortsButton, !i_Connected );
+	EnableWindow( hQuickDiagnoseButton, i_Connected );
 	EnableWindow( hIntervalCombo, !i_Connected );
 	EnableWindow( hLongTermCheck, !i_Connected );
 	EnableWindow( hLongTermEdit, (!i_Connected) && _IsChecked( hLongTermCheck ) );
@@ -2365,6 +2736,8 @@ void CMainWindow::UpdateDeviceProfile()
 	SetWindowTextUtf8( hCsvEdit, Engine.MakeDefaultCsvPath( SelectedDeviceType() ) );
 	Engine.SetLastSelection( SelectedDeviceType(), ReadControlTextUtf8( hPortCombo ) );
 	SyncDisplayNameField();
+	EnsureMinimumClientSize();
+	LayoutChildren();
 	UpdateUiFromState();
 }
 
@@ -2895,6 +3268,7 @@ void CMainWindow::OnToggleControlPanel()
 {
 	bControlVisible = !bControlVisible;
 	SetWindowTextW( hToggleControlButton, bControlVisible ? L"Steuerung / Parameter ausblenden" : L"Steuerung / Parameter einblenden" );
+	EnsureMinimumClientSize();
 	LayoutChildren();
 }
 

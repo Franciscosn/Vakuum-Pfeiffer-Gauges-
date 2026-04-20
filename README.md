@@ -2,7 +2,7 @@
 
 Neu aufgebauter Stand fuer die Pfeiffer-Vakuumsteuerung mit zwei Schichten:
 
-- `cdt_pressure_logger_v9.py` bleibt als funktionierende Python-Referenz erhalten.
+- die Python-Referenz liegt jetzt getrennt in `python/`.
 - der neue native C++-Port liegt in `src/`, `apps/shared/`, `apps/windows/` und `apps/macos/`.
 
 Unterstuetzte Geraetetypen:
@@ -79,15 +79,21 @@ ist, statt direkt wieder an ein Python-Plot-Stack gekoppelt zu werden.
 │   ├── PfeifferGaugeLib.h
 │   ├── SerialPortLib.cpp
 │   └── SerialPortLib.h
+├── python/
+│   ├── cdt_pressure_logger_v9.py
+│   ├── README.md
+│   ├── run_logger.bat
+│   └── run_logger.command
+├── texts/
+│   └── ...
 ├── windows/VisualStudio/
 │   ├── CDTPressureLoggerWin.sln
 │   └── CDTPressureLoggerWin/
 │       ├── CDTPressureLoggerWin.vcxproj
 │       └── CDTPressureLoggerWin.vcxproj.filters
-├── cdt_pressure_logger_v9.py
+├── run_logger.command
 ├── Run CDT Pressure Logger.bat
 ├── Run CDT Pressure Logger.command
-└── texts/
 ```
 
 ## Build und Start unter macOS
@@ -149,10 +155,15 @@ Das ZIP enthaelt die gebaute App:
 
 ## Python-Referenz
 
-Die vorhandene Python-Datei bleibt absichtlich im Repository:
+Die vorhandene Python-App bleibt absichtlich im Repository, jetzt aber getrennt vom nativen Port:
 
-- `cdt_pressure_logger_v9.py`
+- `python/cdt_pressure_logger_v9.py`
+- `python/run_logger.command`
+- `python/run_logger.bat`
+- `run_logger.command` als Root-Starter
 
 Sie ist weiterhin die vollstaendige Labor-Referenz mit der bisherigen Tkinter- und Matplotlib-UI.
 Der neue C++-Port wurde daran funktional ausgerichtet, aber architektonisch in eine spaeter besser
 integrierbare Form ueberfuehrt.
+
+Die Hilfetexte in `texts/` werden von Python und C++ gemeinsam genutzt.

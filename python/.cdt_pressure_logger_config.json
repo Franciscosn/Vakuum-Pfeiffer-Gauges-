@@ -1,0 +1,18 @@
+{
+  "last_device": "TPG 262",
+  "last_port": "/dev/cu.debug-console",
+  "channel_names": {
+    "TPG 262": {
+      "1": "Kanal 1",
+      "2": "Kanal 2"
+    },
+    "MaxiGauge": {
+      "1": "Kanal 1",
+      "2": "Kanal 2",
+      "3": "Kanal 3",
+      "4": "Kanal 4",
+      "5": "Kanal 5",
+      "6": "Kanal 6"
+    }
+  }
+}

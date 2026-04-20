@@ -1,3 +1,4 @@
-#!/bin/bash
-source ~/venvs/cdt_pressure_logger_v9/bin/activate
-python3 "$(dirname "$0")/cdt_pressure_logger_v9.py"
+#!/bin/zsh
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$SCRIPT_DIR/python/run_logger.command"

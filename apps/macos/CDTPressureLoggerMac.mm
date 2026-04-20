@@ -178,6 +178,7 @@ namespace
 		[_titleLabel setDrawsBackground:NO];
 		[_titleLabel setSelectable:NO];
 		[_titleLabel setFont:_SmallBoldFont()];
+		[_titleLabel setLineBreakMode:NSLineBreakByTruncatingTail];
 		[content addSubview:_titleLabel];
 
 		_valueLabel = [[NSTextField alloc] initWithFrame:NSMakeRect( 16, frame.size.height - 86, frame.size.width - 32, 34 )];
@@ -197,6 +198,7 @@ namespace
 		[_statusLabel setDrawsBackground:NO];
 		[_statusLabel setSelectable:NO];
 		[_statusLabel setFont:_MainFont()];
+		[_statusLabel setLineBreakMode:NSLineBreakByTruncatingTail];
 		[_statusLabel setStringValue:@"—"];
 		[content addSubview:_statusLabel];
 
@@ -237,18 +239,41 @@ namespace
 	NSRect bounds = [self bounds];
 	const CGFloat width = bounds.size.width;
 	const CGFloat height = bounds.size.height;
+	const CGFloat leftPadding = 16.0;
+	const CGFloat rightPadding = 16.0;
+	const CGFloat titleHeight = 20.0;
+	const CGFloat valueHeight = 34.0;
+	const CGFloat statusHeight = 22.0;
+	const CGFloat bottomPadding = 14.0;
+	const CGFloat indicatorSize = 18.0;
+	const CGFloat labelGap = 6.0;
+	const CGFloat pairGap = 18.0;
 
-	[_titleLabel setFrame:NSMakeRect( 16, height - 34, width - 32, 20 )];
-	[_valueLabel setFrame:NSMakeRect( 16, height - 86, width - 32, 34 )];
-	[_statusLabel setFrame:NSMakeRect( 16, height - 118, width - 32, 22 )];
+	[_titleLabel setFrame:NSMakeRect( leftPadding, height - 32.0, width - leftPadding - rightPadding, titleHeight )];
+	[_valueLabel setFrame:NSMakeRect( leftPadding, height - 76.0, width - leftPadding - rightPadding, valueHeight )];
+	[_statusLabel setFrame:NSMakeRect( leftPadding, height - 108.0, width - leftPadding - rightPadding, statusHeight )];
 
-	[_okIndicator setFrame:NSMakeRect( width - 104, 18, 18, 18 )];
-	[_offIndicator setFrame:NSMakeRect( width - 58, 18, 18, 18 )];
-	[_orIndicator setFrame:NSMakeRect( width - 14, 18, 18, 18 )];
+	CGFloat cursor = width - rightPadding;
+	const CGFloat orLabelWidth = 24.0;
+	const CGFloat offLabelWidth = 28.0;
+	const CGFloat okLabelWidth = 24.0;
 
-	[_okLabel setFrame:NSMakeRect( width - 130, 14, 24, 22 )];
-	[_offLabel setFrame:NSMakeRect( width - 88, 14, 28, 22 )];
-	[_orLabel setFrame:NSMakeRect( width - 42, 14, 24, 22 )];
+	const CGFloat orIndicatorX = cursor - indicatorSize;
+	const CGFloat orLabelX = orIndicatorX - labelGap - orLabelWidth;
+	cursor = orLabelX - pairGap;
+	const CGFloat offIndicatorX = cursor - indicatorSize;
+	const CGFloat offLabelX = offIndicatorX - labelGap - offLabelWidth;
+	cursor = offLabelX - pairGap;
+	const CGFloat okIndicatorX = cursor - indicatorSize;
+	const CGFloat okLabelX = okIndicatorX - labelGap - okLabelWidth;
+
+	[_okIndicator setFrame:NSMakeRect( okIndicatorX, bottomPadding, indicatorSize, indicatorSize )];
+	[_offIndicator setFrame:NSMakeRect( offIndicatorX, bottomPadding, indicatorSize, indicatorSize )];
+	[_orIndicator setFrame:NSMakeRect( orIndicatorX, bottomPadding, indicatorSize, indicatorSize )];
+
+	[_okLabel setFrame:NSMakeRect( okLabelX, bottomPadding - 4.0, okLabelWidth, 22.0 )];
+	[_offLabel setFrame:NSMakeRect( offLabelX, bottomPadding - 4.0, offLabelWidth, 22.0 )];
+	[_orLabel setFrame:NSMakeRect( orLabelX, bottomPadding - 4.0, orLabelWidth, 22.0 )];
 }
 
 
@@ -699,6 +724,23 @@ namespace
 	NSTextField *_messagesLabel;
 	NSButton *_renameChannelsButton;
 	NSButton *_debugInfoButton;
+	NSTextField *_deviceLabel;
+	NSTextField *_portLabel;
+	NSTextField *_measurementLabel;
+	NSTextField *_csvLabel;
+	NSTextField *_longTermSuffixLabel;
+	NSButton *_connectButton;
+	NSButton *_disconnectButton;
+	NSButton *_refreshPortsButton;
+	NSButton *_diagnoseButton;
+	NSButton *_factoryResetButton;
+	NSButton *_startLoggingButton;
+	NSButton *_newMeasurementButton;
+	NSButton *_stopLoggingButton;
+	NSButton *_csvBrowseButton;
+	NSButton *_browseCsvButton;
+	NSButton *_sendRawButton;
+	NSButton *_rawHelpButton;
 
 	NSPopUpButton *_devicePopup;
 	NSPopUpButton *_portPopup;
@@ -906,6 +948,12 @@ namespace
 	[textView setFont:_MonoFont()];
 	[textView setAutomaticQuoteSubstitutionEnabled:NO];
 	[textView setAutomaticDashSubstitutionEnabled:NO];
+	[textView setHorizontallyResizable:NO];
+	[textView setVerticallyResizable:YES];
+	[textView setMinSize:NSMakeSize( 0, 0 )];
+	[textView setMaxSize:NSMakeSize( CGFLOAT_MAX, CGFLOAT_MAX )];
+	[textView setAutoresizingMask:NSViewWidthSizable];
+	[[textView textContainer] setWidthTracksTextView:YES];
 	[scrollView setDocumentView:textView];
 	[view addSubview:scrollView];
 	return textView;
@@ -926,11 +974,12 @@ namespace
 	[_window setBackgroundColor:[NSColor whiteColor]];
 	[_window center];
 	[_window setDelegate:self];
+	[_window setMinSize:NSMakeSize( 1380.0, 860.0 )];
 
 	NSView *contentView = [_window contentView];
 
 	_leftScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect( 0, 0, 770, frame.size.height )];
-	[_leftScrollView setAutoresizingMask:NSViewHeightSizable];
+	[_leftScrollView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
 	[_leftScrollView setHasVerticalScroller:YES];
 	[_leftScrollView setBorderType:NSNoBorder];
 	_leftContentView = [[PressureFlippedView alloc] initWithFrame:NSMakeRect( 0, 0, 760, 1120 )];
@@ -946,45 +995,45 @@ namespace
 	_connectionBox = [self createSectionBox:NSMakeRect( 10, 56, 740, 304 ) title:@"Verbindung / Messung / Status" inView:_leftContentView];
 	NSView *connectionView = [_connectionBox contentView];
 
-	[self createLabel:NSMakeRect( 16, 12, 48, 24 ) text:@"Gerät:" inView:connectionView bold:NO];
+	_deviceLabel = [self createLabel:NSMakeRect( 16, 12, 48, 24 ) text:@"Gerät:" inView:connectionView bold:NO];
 	_connectionIndicator = [[PressureIndicatorView alloc] initWithFrame:NSMakeRect( 210, 12, 18, 18 )];
 	[connectionView addSubview:_connectionIndicator];
 	_devicePopup = [self createPopup:NSMakeRect( 260, 8, 210, 28 ) titles:@[@"TPG 262", @"MaxiGauge"] inView:connectionView];
 	[_devicePopup setTarget:self];
 	[_devicePopup setAction:@selector(deviceChanged:)];
-	[self createLabel:NSMakeRect( 500, 12, 35, 24 ) text:@"Port" inView:connectionView bold:NO];
+	_portLabel = [self createLabel:NSMakeRect( 500, 12, 35, 24 ) text:@"Port" inView:connectionView bold:NO];
 	_portPopup = [self createPopup:NSMakeRect( 546, 8, 172, 28 ) titles:@[@""] inView:connectionView];
 	[_portPopup setTarget:self];
 	[_portPopup setAction:@selector(selectionChanged:)];
 
-	[self createButton:NSMakeRect( 16, 46, 118, 30 ) title:@"Verbinden" target:self action:@selector(connectAction:) inView:connectionView];
-	[self createButton:NSMakeRect( 142, 46, 118, 30 ) title:@"Trennen" target:self action:@selector(disconnectAction:) inView:connectionView];
-	[self createButton:NSMakeRect( 268, 46, 126, 30 ) title:@"Aktualisieren" target:self action:@selector(refreshPorts:) inView:connectionView];
-	[self createButton:NSMakeRect( 402, 46, 118, 30 ) title:@"Diagnose" target:self action:@selector(diagnoseAction:) inView:connectionView];
-	[self createButton:NSMakeRect( 528, 46, 118, 30 ) title:@"Werkreset" target:self action:@selector(factoryResetAction:) inView:connectionView];
+	_connectButton = [self createButton:NSMakeRect( 16, 46, 118, 30 ) title:@"Verbinden" target:self action:@selector(connectAction:) inView:connectionView];
+	_disconnectButton = [self createButton:NSMakeRect( 142, 46, 118, 30 ) title:@"Trennen" target:self action:@selector(disconnectAction:) inView:connectionView];
+	_refreshPortsButton = [self createButton:NSMakeRect( 268, 46, 126, 30 ) title:@"Aktualisieren" target:self action:@selector(refreshPorts:) inView:connectionView];
+	_diagnoseButton = [self createButton:NSMakeRect( 402, 46, 118, 30 ) title:@"Diagnose" target:self action:@selector(diagnoseAction:) inView:connectionView];
+	_factoryResetButton = [self createButton:NSMakeRect( 528, 46, 118, 30 ) title:@"Werkreset" target:self action:@selector(factoryResetAction:) inView:connectionView];
 
-	[self createLabel:NSMakeRect( 16, 82, 68, 24 ) text:@"Messung:" inView:connectionView bold:NO];
+	_measurementLabel = [self createLabel:NSMakeRect( 16, 82, 68, 24 ) text:@"Messung:" inView:connectionView bold:NO];
 	_measurementIndicator = [[PressureIndicatorView alloc] initWithFrame:NSMakeRect( 210, 82, 18, 18 )];
 	[connectionView addSubview:_measurementIndicator];
 	_measurementStatusLabel = [self createLabel:NSMakeRect( 260, 82, 220, 24 ) text:@"Nicht verbunden" inView:connectionView bold:NO];
 	_samplesStatusLabel = [self createLabel:NSMakeRect( 500, 82, 140, 24 ) text:@"Sam 0" inView:connectionView bold:NO];
 
-	[self createButton:NSMakeRect( 16, 118, 140, 30 ) title:@"Logging starten" target:self action:@selector(startLoggingAction:) inView:connectionView];
-	[self createButton:NSMakeRect( 164, 118, 162, 30 ) title:@"Neue Datei + Start" target:self action:@selector(startNewMeasurementAction:) inView:connectionView];
-	[self createButton:NSMakeRect( 334, 118, 146, 30 ) title:@"Logging stoppen" target:self action:@selector(stopLoggingAction:) inView:connectionView];
+	_startLoggingButton = [self createButton:NSMakeRect( 16, 118, 140, 30 ) title:@"Logging starten" target:self action:@selector(startLoggingAction:) inView:connectionView];
+	_newMeasurementButton = [self createButton:NSMakeRect( 164, 118, 162, 30 ) title:@"Neue Datei + Start" target:self action:@selector(startNewMeasurementAction:) inView:connectionView];
+	_stopLoggingButton = [self createButton:NSMakeRect( 334, 118, 146, 30 ) title:@"Logging stoppen" target:self action:@selector(stopLoggingAction:) inView:connectionView];
 	_liveOnlyCheck = [self createCheckbox:NSMakeRect( 490, 120, 236, 26 ) title:@"nur live anzeigen, nicht speichern" target:self action:@selector(refreshUi:) inView:connectionView];
 
 	_intervalTitleLabel = [self createLabel:NSMakeRect( 16, 154, 136, 24 ) text:@"Continuous Mode" inView:connectionView bold:NO];
 	_intervalPopup = [self createPopup:NSMakeRect( 164, 150, 100, 28 ) titles:@[@"1 s"] inView:connectionView];
 	_longTermCheck = [self createCheckbox:NSMakeRect( 274, 152, 130, 26 ) title:@"Langzeitmodus" target:self action:@selector(deviceChanged:) inView:connectionView];
 	_longTermField = [self createField:NSMakeRect( 462, 150, 56, 28 ) text:@"60" inView:connectionView];
-	[self createLabel:NSMakeRect( 526, 154, 118, 24 ) text:@"s (Standard 60)" inView:connectionView bold:NO];
+	_longTermSuffixLabel = [self createLabel:NSMakeRect( 526, 154, 118, 24 ) text:@"s (Standard 60)" inView:connectionView bold:NO];
 
-	[self createLabel:NSMakeRect( 16, 190, 36, 24 ) text:@"CSV" inView:connectionView bold:NO];
+	_csvLabel = [self createLabel:NSMakeRect( 16, 190, 36, 24 ) text:@"CSV" inView:connectionView bold:NO];
 	_csvField = [self createField:NSMakeRect( 56, 186, 626, 28 ) text:@"" inView:connectionView];
-	[self createButton:NSMakeRect( 690, 186, 30, 28 ) title:@"…" target:self action:@selector(chooseCsvPathAction:) inView:connectionView];
+	_csvBrowseButton = [self createButton:NSMakeRect( 690, 186, 30, 28 ) title:@"…" target:self action:@selector(chooseCsvPathAction:) inView:connectionView];
 
-	[self createButton:NSMakeRect( 16, 226, 118, 30 ) title:@"Durchsuchen" target:self action:@selector(chooseCsvPathAction:) inView:connectionView];
+	_browseCsvButton = [self createButton:NSMakeRect( 16, 226, 118, 30 ) title:@"Durchsuchen" target:self action:@selector(chooseCsvPathAction:) inView:connectionView];
 	_fileIndicator = [[PressureIndicatorView alloc] initWithFrame:NSMakeRect( 142, 232, 18, 18 )];
 	[connectionView addSubview:_fileIndicator];
 	_fileStatusLabel = [self createLabel:NSMakeRect( 174, 228, 540, 24 ) text:@"Datei: Keine Datei offen" inView:connectionView bold:NO];
@@ -1011,8 +1060,8 @@ namespace
 	_rawBox = [self createSectionBox:NSMakeRect( 10, 0, 740, 64 ) title:@"Rohkommando" inView:_leftContentView];
 	NSView *rawView = [_rawBox contentView];
 	_rawField = [self createField:NSMakeRect( 14, 10, 500, 28 ) text:@"" inView:rawView];
-	[self createButton:NSMakeRect( 528, 8, 150, 30 ) title:@"Senden" target:self action:@selector(sendRawAction:) inView:rawView];
-	[self createInfoButton:NSMakeRect( 686, 8, 34, 30 ) key:@"raw" title:@"Hilfe: Rohkommandos" inView:rawView];
+	_sendRawButton = [self createButton:NSMakeRect( 528, 8, 150, 30 ) title:@"Senden" target:self action:@selector(sendRawAction:) inView:rawView];
+	_rawHelpButton = [self createInfoButton:NSMakeRect( 686, 8, 34, 30 ) key:@"raw" title:@"Hilfe: Rohkommandos" inView:rawView];
 
 	_toggleControlButton = [self createButton:NSMakeRect( 10, 0, 740, 30 ) title:@"Steuerung / Parameter einblenden" target:self action:@selector(toggleControlAction:) inView:_leftContentView];
 	_controlBox = [self createSectionBox:NSMakeRect( 10, 0, 740, 516 ) title:@"Steuerung / Parameter" inView:_leftContentView];
@@ -1224,13 +1273,91 @@ namespace
 
 - (void)layoutInterface
 {
-	const CGFloat leftWidth = 760.0;
-	const CGFloat outerPadding = 10.0;
-	const CGFloat cardGap = 12.0;
-	const CGFloat cardHeight = 122.0;
-	const CGFloat cardsTop = CGRectGetMaxY( [_connectionBox frame] ) + 14.0;
-	const NSInteger cardRows = ([self activeChannelCount] + 1) / 2;
+	NSView *contentView = [_window contentView];
+	const CGFloat totalWidth = std::max( 1380.0, contentView.bounds.size.width );
+	const CGFloat totalHeight = std::max( 860.0, contentView.bounds.size.height );
+	const CGFloat splitterGap = 12.0;
+	CGFloat leftWidth = floor( totalWidth * 0.48 );
+	leftWidth = std::max( 760.0, std::min( leftWidth, totalWidth - 560.0 ) );
+	const CGFloat rightX = leftWidth + splitterGap;
+	const CGFloat rightWidth = std::max( 548.0, totalWidth - rightX );
 
+	[_leftScrollView setFrame:NSMakeRect( 0, 0, leftWidth, totalHeight )];
+	[_rightView setFrame:NSMakeRect( rightX, 0, rightWidth, totalHeight )];
+
+	const CGFloat outerPadding = 12.0;
+	const CGFloat sectionWidth = leftWidth - outerPadding * 2.0;
+	const CGFloat cardGap = 12.0;
+	const CGFloat cardHeight = 112.0;
+	const CGFloat cardSpacing = 12.0;
+	const CGFloat sectionStartY = 56.0;
+
+	[_connectionBox setFrame:NSMakeRect( outerPadding, sectionStartY, sectionWidth, 274.0 )];
+	NSView *connectionView = [_connectionBox contentView];
+	const CGFloat innerLeft = 16.0;
+	const CGFloat innerRight = 16.0;
+	const CGFloat row1Y = 10.0;
+	const CGFloat row2Y = 46.0;
+	const CGFloat row3Y = 82.0;
+	const CGFloat row4Y = 118.0;
+	const CGFloat row5Y = 154.0;
+	const CGFloat row6Y = 190.0;
+	const CGFloat row7Y = 226.0;
+	const CGFloat availableWidth = connectionView.bounds.size.width - innerLeft - innerRight;
+
+	const CGFloat portPopupWidth = std::max( 184.0, std::min( 248.0, availableWidth * 0.30 ) );
+	const CGFloat portLabelWidth = 35.0;
+	const CGFloat portPopupX = connectionView.bounds.size.width - innerRight - portPopupWidth;
+	const CGFloat portLabelX = portPopupX - 42.0;
+	const CGFloat devicePopupX = 258.0;
+	const CGFloat indicatorX = 210.0;
+	const CGFloat devicePopupWidth = std::max( 170.0, portLabelX - 16.0 - devicePopupX );
+
+	[_deviceLabel setFrame:NSMakeRect( innerLeft, row1Y + 4.0, 48.0, 24.0 )];
+	[_connectionIndicator setFrame:NSMakeRect( indicatorX, row1Y + 2.0, 18.0, 18.0 )];
+	[_devicePopup setFrame:NSMakeRect( devicePopupX, row1Y, devicePopupWidth, 28.0 )];
+	[_portLabel setFrame:NSMakeRect( portLabelX, row1Y + 4.0, portLabelWidth, 24.0 )];
+	[_portPopup setFrame:NSMakeRect( portPopupX, row1Y, portPopupWidth, 28.0 )];
+
+	const CGFloat commandGap = 8.0;
+	const CGFloat commandButtonWidth = floor( (availableWidth - commandGap * 4.0) / 5.0 );
+	NSArray<NSButton *> *connectionButtons = @[ _connectButton, _disconnectButton, _refreshPortsButton, _diagnoseButton, _factoryResetButton ];
+	for ( NSInteger index = 0; index < connectionButtons.count; index++ )
+	{
+		NSButton *button = connectionButtons[index];
+		const CGFloat buttonX = innerLeft + index * (commandButtonWidth + commandGap);
+		[button setFrame:NSMakeRect( buttonX, row2Y, commandButtonWidth, 30.0 )];
+	}
+
+	[_measurementLabel setFrame:NSMakeRect( innerLeft, row3Y + 4.0, 68.0, 24.0 )];
+	[_measurementIndicator setFrame:NSMakeRect( indicatorX, row3Y + 2.0, 18.0, 18.0 )];
+	[_samplesStatusLabel setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 122.0, row3Y + 4.0, 122.0, 24.0 )];
+	[_measurementStatusLabel setFrame:NSMakeRect( devicePopupX, row3Y + 4.0, CGRectGetMinX( [_samplesStatusLabel frame] ) - 14.0 - devicePopupX, 24.0 )];
+
+	const CGFloat measurementButtonsWidth = availableWidth * 0.62;
+	const CGFloat measurementButtonWidth = floor( (measurementButtonsWidth - commandGap * 2.0) / 3.0 );
+	[_startLoggingButton setFrame:NSMakeRect( innerLeft, row4Y, measurementButtonWidth, 30.0 )];
+	[_newMeasurementButton setFrame:NSMakeRect( innerLeft + measurementButtonWidth + commandGap, row4Y, measurementButtonWidth, 30.0 )];
+	[_stopLoggingButton setFrame:NSMakeRect( innerLeft + (measurementButtonWidth + commandGap) * 2.0, row4Y, measurementButtonWidth, 30.0 )];
+	const CGFloat liveOnlyX = innerLeft + measurementButtonWidth * 3.0 + commandGap * 2.0 + 12.0;
+	[_liveOnlyCheck setFrame:NSMakeRect( liveOnlyX, row4Y + 2.0, connectionView.bounds.size.width - innerRight - liveOnlyX, 26.0 )];
+
+	[_intervalTitleLabel setFrame:NSMakeRect( innerLeft, row5Y + 4.0, 136.0, 24.0 )];
+	[_intervalPopup setFrame:NSMakeRect( 164.0, row5Y, 104.0, 28.0 )];
+	[_longTermCheck setFrame:NSMakeRect( 276.0, row5Y + 2.0, 136.0, 26.0 )];
+	[_longTermField setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 214.0, row5Y, 58.0, 28.0 )];
+	[_longTermSuffixLabel setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 148.0, row5Y + 4.0, 132.0, 24.0 )];
+
+	[_csvLabel setFrame:NSMakeRect( innerLeft, row6Y + 4.0, 36.0, 24.0 )];
+	[_csvBrowseButton setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 30.0, row6Y, 30.0, 28.0 )];
+	[_csvField setFrame:NSMakeRect( 56.0, row6Y, CGRectGetMinX( [_csvBrowseButton frame] ) - 8.0 - 56.0, 28.0 )];
+
+	[_browseCsvButton setFrame:NSMakeRect( innerLeft, row7Y, 118.0, 30.0 )];
+	[_fileIndicator setFrame:NSMakeRect( 144.0, row7Y + 6.0, 18.0, 18.0 )];
+	[_fileStatusLabel setFrame:NSMakeRect( 176.0, row7Y + 4.0, connectionView.bounds.size.width - innerRight - 176.0, 24.0 )];
+
+	const CGFloat cardsTop = CGRectGetMaxY( [_connectionBox frame] ) + 12.0;
+	const NSInteger cardRows = ([self activeChannelCount] + 1) / 2;
 	CGFloat currentY = cardsTop;
 	const CGFloat cardWidth = (leftWidth - outerPadding * 2.0 - cardGap) / 2.0;
 	for ( NSInteger i = 0; i < 6; i++ )
@@ -1238,34 +1365,45 @@ namespace
 		const NSInteger row = i / 2;
 		const NSInteger col = i % 2;
 		[_channelCards[i] setFrame:NSMakeRect( outerPadding + col * (cardWidth + cardGap),
-											  currentY + row * (cardHeight + 12.0),
+											  currentY + row * (cardHeight + cardSpacing),
 											  cardWidth,
 											  cardHeight )];
 	}
-	currentY += cardRows * (cardHeight + 12.0) - 2.0;
+	currentY += cardRows * (cardHeight + cardSpacing) - 2.0;
 
-	[_plotSelectionLabel setFrame:NSMakeRect( 16, currentY, 120, 24 )];
+	[_plotSelectionLabel setFrame:NSMakeRect( 16.0, currentY, 120.0, 24.0 )];
 	for ( int i = 0; i < 6; i++ )
-		[_plotChecks[i] setFrame:NSMakeRect( 145 + i * 44, currentY - 1.0, 42, 24 )];
-	[_renameChannelsButton setFrame:NSMakeRect( 430, currentY - 2.0, 132, 28 )];
-	[_debugInfoButton setFrame:NSMakeRect( 572, currentY - 2.0, 148, 28 )];
+		[_plotChecks[i] setFrame:NSMakeRect( 145.0 + i * 38.0, currentY - 1.0, 36.0, 24.0 )];
+	const CGFloat debugWidth = 148.0;
+	const CGFloat renameWidth = 132.0;
+	const CGFloat actionGap = 10.0;
+	const CGFloat debugX = leftWidth - outerPadding - debugWidth;
+	const CGFloat renameX = debugX - actionGap - renameWidth;
+	[_renameChannelsButton setFrame:NSMakeRect( renameX, currentY - 2.0, renameWidth, 28.0 )];
+	[_debugInfoButton setFrame:NSMakeRect( debugX, currentY - 2.0, debugWidth, 28.0 )];
 
 	currentY += 32.0;
-	[_messagesLabel setFrame:NSMakeRect( 16, currentY, 90, 24 )];
+	[_messagesLabel setFrame:NSMakeRect( 16.0, currentY, 90.0, 24.0 )];
 	NSScrollView *messagesScroll = [_messagesView enclosingScrollView];
-	[messagesScroll setFrame:NSMakeRect( outerPadding, currentY + 26.0, leftWidth - outerPadding * 2.0, 162.0 )];
+	const CGFloat messagesHeight = std::max( 150.0, std::min( 220.0, floor( _leftScrollView.bounds.size.height * 0.18 ) ) );
+	[messagesScroll setFrame:NSMakeRect( outerPadding, currentY + 26.0, sectionWidth, messagesHeight )];
 
-	currentY += 198.0;
-	[_rawBox setFrame:NSMakeRect( outerPadding, currentY, leftWidth - outerPadding * 2.0, 64.0 )];
+	currentY += messagesHeight + 34.0;
+	[_rawBox setFrame:NSMakeRect( outerPadding, currentY, sectionWidth, 64.0 )];
+	NSView *rawView = [_rawBox contentView];
+	[_rawHelpButton setFrame:NSMakeRect( rawView.bounds.size.width - 38.0, 8.0, 34.0, 30.0 )];
+	[_sendRawButton setFrame:NSMakeRect( rawView.bounds.size.width - 192.0, 8.0, 150.0, 30.0 )];
+	[_rawField setFrame:NSMakeRect( 14.0, 10.0, CGRectGetMinX( [_sendRawButton frame] ) - 18.0, 28.0 )];
+
 	currentY += 74.0;
-	[_toggleControlButton setFrame:NSMakeRect( outerPadding, currentY, leftWidth - outerPadding * 2.0, 30.0 )];
+	[_toggleControlButton setFrame:NSMakeRect( outerPadding, currentY, sectionWidth, 30.0 )];
 	currentY += 40.0;
 
 	if ( _controlVisible )
 	{
 		[_controlBox setHidden:NO];
-			const CGFloat controlHeight = ([self selectedDeviceType] == PressureLoggerDevice_MaxiGauge) ? 516.0 : 374.0;
-		[_controlBox setFrame:NSMakeRect( outerPadding, currentY, leftWidth - outerPadding * 2.0, controlHeight )];
+		const CGFloat controlHeight = ([self selectedDeviceType] == PressureLoggerDevice_MaxiGauge) ? 516.0 : 374.0;
+		[_controlBox setFrame:NSMakeRect( outerPadding, currentY, sectionWidth, controlHeight )];
 		currentY += controlHeight + 10.0;
 	}
 	else
@@ -1276,22 +1414,21 @@ namespace
 	const CGFloat contentHeight = std::max( currentY + 16.0, _leftScrollView.bounds.size.height );
 	[_leftContentView setFrame:NSMakeRect( 0, 0, leftWidth, contentHeight )];
 
-	const CGFloat rightWidth = _rightView.bounds.size.width;
 	const CGFloat rightHeight = _rightView.bounds.size.height;
 	const CGFloat footerHeight = 58.0;
-	[_plotView setFrame:NSMakeRect( 20, 20, rightWidth - 40, rightHeight - footerHeight - 30 )];
+	[_plotView setFrame:NSMakeRect( 20.0, 20.0, rightWidth - 40.0, rightHeight - footerHeight - 30.0 )];
 	[_plotFooterView setFrame:NSMakeRect( 0, rightHeight - footerHeight, rightWidth, footerHeight )];
 
-	[_plotHomeButton setFrame:NSMakeRect( 20, 14, 82, 30 )];
-	[_plotZoomOutButton setFrame:NSMakeRect( 110, 14, 44, 30 )];
-	[_plotZoomInButton setFrame:NSMakeRect( 162, 14, 44, 30 )];
+	[_plotHomeButton setFrame:NSMakeRect( 20.0, 14.0, 82.0, 30.0 )];
+	[_plotZoomOutButton setFrame:NSMakeRect( 110.0, 14.0, 44.0, 30.0 )];
+	[_plotZoomInButton setFrame:NSMakeRect( 162.0, 14.0, 44.0, 30.0 )];
 
 	CGFloat buttonRight = rightWidth - 20.0;
-	[_plotCsvButton setFrame:NSMakeRect( buttonRight - 118.0, 14, 118, 30 )];
+	[_plotCsvButton setFrame:NSMakeRect( buttonRight - 118.0, 14.0, 118.0, 30.0 )];
 	buttonRight -= 128.0;
-	[_externalPlotButton setFrame:NSMakeRect( buttonRight - 128.0, 14, 128, 30 )];
+	[_externalPlotButton setFrame:NSMakeRect( buttonRight - 128.0, 14.0, 128.0, 30.0 )];
 	buttonRight -= 138.0;
-	[_clearPlotButton setFrame:NSMakeRect( buttonRight - 118.0, 14, 118, 30 )];
+	[_clearPlotButton setFrame:NSMakeRect( buttonRight - 118.0, 14.0, 118.0, 30.0 )];
 }
 
 

@@ -108,6 +108,8 @@ HELP_FILENAMES = {
 }
 HELP_DIRNAME = "texts"
 CONFIG_FILENAME = ".cdt_pressure_logger_config.json"
+APP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = APP_DIR.parent
 
 
 def list_ports() -> List[str]:
@@ -1077,10 +1079,17 @@ class PressureLoggerApp:
     def _help_path(self, key: str) -> Path:
         """Liefert den Dateipfad zur angeforderten Hilfedatei."""
         filename = HELP_FILENAMES[key]
-        return Path(__file__).with_name(HELP_DIRNAME) / filename
+        candidates = [
+            APP_DIR / HELP_DIRNAME / filename,
+            REPO_ROOT / HELP_DIRNAME / filename,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
 
     def _config_path(self) -> Path:
-        return Path(__file__).with_name(CONFIG_FILENAME)
+        return APP_DIR / CONFIG_FILENAME
 
     def _load_user_config(self) -> None:
         path = self._config_path()
