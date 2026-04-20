@@ -34,8 +34,15 @@
 
 #define HL_API
 
-typedef std::uint32_t DWORD;
-typedef std::uint8_t BYTE;
+#ifdef MS_WIN
+	#ifndef NOMINMAX
+		#define NOMINMAX
+	#endif
+	#include <windows.h>
+#else
+	typedef std::uint32_t DWORD;
+	typedef std::uint8_t BYTE;
+#endif
 
 
 #endif  // HARDWARELIB_H

@@ -24,6 +24,7 @@
 #include "PfeifferGaugeLib.h"
 
 #include <atomic>
+#include <chrono>
 #include <fstream>
 #include <functional>
 #include <memory>

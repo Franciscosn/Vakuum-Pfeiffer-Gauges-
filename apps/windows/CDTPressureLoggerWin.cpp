@@ -17,6 +17,9 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
+#ifndef NOMINMAX
+	#define NOMINMAX
+#endif
 #include <windows.h>
 #include <commdlg.h>
 
@@ -2230,7 +2233,7 @@ void CMainWindow::LayoutChildren()
 	const int plot_min_width = 560;
 	const int left_min_width = 560;
 	const int left_max_width = 980;
-	const int total_width = max( 0, client_rect.right - outer_margin * 2 - split_gap );
+	const int total_width = max( 0, static_cast<int>( client_rect.right ) - outer_margin * 2 - split_gap );
 
 	int left_width = min( left_max_width, max( left_min_width, (total_width * 42) / 100 ) );
 	if ( (total_width - left_width) < plot_min_width )
@@ -2239,7 +2242,7 @@ void CMainWindow::LayoutChildren()
 
 	const int left_x = outer_margin;
 	const int right_left = left_x + left_width + split_gap;
-	const int right_width = max( 520, client_rect.right - right_left - right_margin );
+	const int right_width = max( 520, static_cast<int>( client_rect.right ) - right_left - right_margin );
 	const bool compact = (left_width < 760);
 
 	MoveWindow( hTitleLabel, 16, 12, left_width, 32, TRUE );
