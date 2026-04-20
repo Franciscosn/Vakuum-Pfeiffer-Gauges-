@@ -82,6 +82,7 @@ ist, statt direkt wieder an ein Python-Plot-Stack gekoppelt zu werden.
 ├── python/
 │   ├── cdt_pressure_logger_v9.py
 │   ├── README.md
+│   ├── requirements.txt
 │   ├── run_logger.bat
 │   └── run_logger.command
 ├── texts/
@@ -91,7 +92,6 @@ ist, statt direkt wieder an ein Python-Plot-Stack gekoppelt zu werden.
 │   └── CDTPressureLoggerWin/
 │       ├── CDTPressureLoggerWin.vcxproj
 │       └── CDTPressureLoggerWin.vcxproj.filters
-├── run_logger.command
 ├── Run CDT Pressure Logger.bat
 ├── Run CDT Pressure Logger.command
 ```
@@ -102,12 +102,18 @@ ist, statt direkt wieder an ein Python-Plot-Stack gekoppelt zu werden.
 - oder im Terminal:
 
 ```bash
-./apps/macos/build_macos_app.sh
+./Run\ CDT\ Pressure\ Logger.command
 ```
 
 Ergebnis:
 
 - `build/macos/CDT Pressure Logger.app`
+
+Direkt oeffnen nach dem Build:
+
+```bash
+open "build/macos/CDT Pressure Logger.app"
+```
 
 Voraussetzung:
 
@@ -160,7 +166,6 @@ Die vorhandene Python-App bleibt absichtlich im Repository, jetzt aber getrennt 
 - `python/cdt_pressure_logger_v9.py`
 - `python/run_logger.command`
 - `python/run_logger.bat`
-- `run_logger.command` als Root-Starter
 
 Sie ist weiterhin die vollstaendige Labor-Referenz mit der bisherigen Tkinter- und Matplotlib-UI.
 Der neue C++-Port wurde daran funktional ausgerichtet, aber architektonisch in eine spaeter besser

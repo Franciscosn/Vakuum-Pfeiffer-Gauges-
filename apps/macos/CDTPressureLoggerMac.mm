@@ -707,6 +707,88 @@ namespace
 @end
 
 
+typedef NS_ENUM( NSInteger, PressureSplitDragPhase )
+{
+	PressureSplitDragPhaseBegan = 0,
+	PressureSplitDragPhaseChanged,
+	PressureSplitDragPhaseEnded,
+	PressureSplitDragPhaseReset
+};
+
+typedef void (^PressureSplitDragHandler)( PressureSplitDragPhase i_Phase, CGFloat i_DeltaX );
+
+
+@interface PressureSplitView : NSView
+@property (nonatomic, copy) PressureSplitDragHandler dragHandler;
+@end
+
+
+@implementation PressureSplitView
+
+- (BOOL)isFlipped
+{
+	return YES;
+}
+
+
+- (void)resetCursorRects
+{
+	[super resetCursorRects];
+	[self addCursorRect:[self bounds] cursor:[NSCursor resizeLeftRightCursor]];
+}
+
+
+- (void)drawRect:(NSRect)dirtyRect
+{
+	(void) dirtyRect;
+
+	[[NSColor clearColor] setFill];
+	NSRectFill( [self bounds] );
+
+	NSRect lineRect = NSMakeRect( floor( ([self bounds].size.width - 2.0) * 0.5 ), 0.0, 2.0, [self bounds].size.height );
+	[[NSColor colorWithCalibratedWhite:0.76 alpha:1.0] setFill];
+	NSRectFillUsingOperation( lineRect, NSCompositingOperationSourceOver );
+
+	NSRect knobRect = NSMakeRect( floor( ([self bounds].size.width - 4.0) * 0.5 ), floor( ([self bounds].size.height - 34.0) * 0.5 ), 4.0, 34.0 );
+	NSBezierPath *knobPath = [NSBezierPath bezierPathWithRoundedRect:knobRect xRadius:2.0 yRadius:2.0];
+	[[NSColor colorWithCalibratedWhite:0.68 alpha:1.0] setFill];
+	[knobPath fill];
+}
+
+
+- (void)mouseDown:(NSEvent *)event
+{
+	if ( [event clickCount] >= 2 )
+	{
+		if ( self.dragHandler != nil )
+			self.dragHandler( PressureSplitDragPhaseReset, 0.0 );
+		return;
+	}
+
+	const CGFloat startX = [event locationInWindow].x;
+	if ( self.dragHandler != nil )
+		self.dragHandler( PressureSplitDragPhaseBegan, 0.0 );
+
+	while ( true )
+	{
+		NSEvent *nextEvent = [[self window] nextEventMatchingMask:(NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp)];
+		const CGFloat deltaX = [nextEvent locationInWindow].x - startX;
+		if ( [nextEvent type] == NSEventTypeLeftMouseDragged )
+		{
+			if ( self.dragHandler != nil )
+				self.dragHandler( PressureSplitDragPhaseChanged, deltaX );
+			continue;
+		}
+
+		if ( self.dragHandler != nil )
+			self.dragHandler( PressureSplitDragPhaseEnded, deltaX );
+		break;
+	}
+}
+
+@end
+
+
 @interface CDTPressureLoggerDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
 @end
 
@@ -716,6 +798,7 @@ namespace
 	NSWindow *_window;
 	NSScrollView *_leftScrollView;
 	NSView *_leftContentView;
+	PressureSplitView *_splitterView;
 	NSView *_rightView;
 	NSBox *_connectionBox;
 	NSBox *_rawBox;
@@ -797,6 +880,8 @@ namespace
 	PressureLoggerStateSnapshot _csvSnapshot;
 	BOOL _controlVisible;
 	BOOL _plotVisible[6];
+	CGFloat _preferredLeftWidth;
+	CGFloat _splitDragStartLeftWidth;
 }
 
 
@@ -974,7 +1059,7 @@ namespace
 	[_window setBackgroundColor:[NSColor whiteColor]];
 	[_window center];
 	[_window setDelegate:self];
-	[_window setMinSize:NSMakeSize( 1380.0, 860.0 )];
+	[_window setMinSize:NSMakeSize( 1060.0, 760.0 )];
 
 	NSView *contentView = [_window contentView];
 
@@ -986,7 +1071,38 @@ namespace
 	[_leftScrollView setDocumentView:_leftContentView];
 	[contentView addSubview:_leftScrollView];
 
-	_rightView = [[PressureFlippedView alloc] initWithFrame:NSMakeRect( 780, 0, frame.size.width - 780, frame.size.height )];
+	CDTPressureLoggerDelegate *__weak weakSelf = self;
+	_splitterView = [[PressureSplitView alloc] initWithFrame:NSMakeRect( 770, 0, 12, frame.size.height )];
+	[_splitterView setAutoresizingMask:NSViewHeightSizable];
+	[_splitterView setToolTip:@"Links/Rechts ziehen, Doppelklick = Auto-Modus"];
+	[_splitterView setDragHandler:^( PressureSplitDragPhase i_Phase, CGFloat i_DeltaX )
+	{
+		CDTPressureLoggerDelegate *strongSelf = weakSelf;
+		if ( strongSelf == nil )
+			return;
+
+		const CGFloat totalWidth = strongSelf->_window.contentView.bounds.size.width;
+		if ( i_Phase == PressureSplitDragPhaseReset )
+		{
+			strongSelf->_preferredLeftWidth = 0.0;
+			[strongSelf layoutInterface];
+			return;
+		}
+
+		if ( i_Phase == PressureSplitDragPhaseBegan )
+		{
+			strongSelf->_splitDragStartLeftWidth = [strongSelf resolvedLeftPanelWidthForTotalWidth:totalWidth];
+			return;
+		}
+
+		const CGFloat minLeftWidth = [strongSelf minimumLeftPanelWidth];
+		const CGFloat maxLeftWidth = [strongSelf maximumLeftPanelWidthForTotalWidth:totalWidth];
+		strongSelf->_preferredLeftWidth = std::max( minLeftWidth, std::min( strongSelf->_splitDragStartLeftWidth + i_DeltaX, maxLeftWidth ) );
+		[strongSelf layoutInterface];
+	}];
+	[contentView addSubview:_splitterView];
+
+	_rightView = [[PressureFlippedView alloc] initWithFrame:NSMakeRect( 782, 0, frame.size.width - 782, frame.size.height )];
 	[_rightView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
 	[contentView addSubview:_rightView];
 
@@ -1158,6 +1274,29 @@ namespace
 }
 
 
+- (CGFloat)minimumLeftPanelWidth
+{
+	return 520.0;
+}
+
+
+- (CGFloat)maximumLeftPanelWidthForTotalWidth:(CGFloat)totalWidth
+{
+	return std::min( 900.0, totalWidth - 520.0 );
+}
+
+
+- (CGFloat)resolvedLeftPanelWidthForTotalWidth:(CGFloat)totalWidth
+{
+	const CGFloat minimumWidth = [self minimumLeftPanelWidth];
+	const CGFloat maximumWidth = [self maximumLeftPanelWidthForTotalWidth:totalWidth];
+	const CGFloat automaticWidth = std::max( minimumWidth, std::min( floor( totalWidth * 0.44 ), maximumWidth ) );
+	if ( _preferredLeftWidth <= 0.0 )
+		return automaticWidth;
+	return std::max( minimumWidth, std::min( _preferredLeftWidth, maximumWidth ) );
+}
+
+
 - (void)applyDefaults
 {
 	[_devicePopup selectItemAtIndex:(_engine.GetLastDeviceType() == PressureLoggerDevice_MaxiGauge) ? 1 : 0];
@@ -1274,89 +1413,170 @@ namespace
 - (void)layoutInterface
 {
 	NSView *contentView = [_window contentView];
-	const CGFloat totalWidth = std::max( 1380.0, contentView.bounds.size.width );
-	const CGFloat totalHeight = std::max( 860.0, contentView.bounds.size.height );
+	const CGFloat totalWidth = contentView.bounds.size.width;
+	const CGFloat totalHeight = contentView.bounds.size.height;
 	const CGFloat splitterGap = 12.0;
-	CGFloat leftWidth = floor( totalWidth * 0.48 );
-	leftWidth = std::max( 760.0, std::min( leftWidth, totalWidth - 560.0 ) );
+	const CGFloat leftWidth = [self resolvedLeftPanelWidthForTotalWidth:totalWidth];
 	const CGFloat rightX = leftWidth + splitterGap;
-	const CGFloat rightWidth = std::max( 548.0, totalWidth - rightX );
+	const CGFloat rightWidth = std::max( 520.0, totalWidth - rightX );
+	const BOOL compact = (leftWidth < 760.0);
+	const BOOL tightCompact = (leftWidth < 620.0);
+	const BOOL ultraCompact = (leftWidth < 560.0);
 
 	[_leftScrollView setFrame:NSMakeRect( 0, 0, leftWidth, totalHeight )];
+	[_splitterView setFrame:NSMakeRect( leftWidth, 0, splitterGap, totalHeight )];
 	[_rightView setFrame:NSMakeRect( rightX, 0, rightWidth, totalHeight )];
 
-	const CGFloat outerPadding = 12.0;
+	const CGFloat outerPadding = ultraCompact ? 8.0 : (tightCompact ? 10.0 : 12.0);
 	const CGFloat sectionWidth = leftWidth - outerPadding * 2.0;
-	const CGFloat cardGap = 12.0;
-	const CGFloat cardHeight = 112.0;
-	const CGFloat cardSpacing = 12.0;
-	const CGFloat sectionStartY = 56.0;
+	const CGFloat cardGap = ultraCompact ? 8.0 : (tightCompact ? 10.0 : 12.0);
+	const CGFloat cardHeight = ultraCompact ? 80.0 : (tightCompact ? 88.0 : (compact ? 96.0 : 104.0));
+	const CGFloat cardSpacing = ultraCompact ? 6.0 : (tightCompact ? 8.0 : 10.0);
+	const CGFloat sectionStartY = ultraCompact ? 52.0 : 56.0;
+	const CGFloat connectionHeight = ultraCompact ? 308.0 : (tightCompact ? 334.0 : (compact ? 350.0 : 274.0));
 
-	[_connectionBox setFrame:NSMakeRect( outerPadding, sectionStartY, sectionWidth, 274.0 )];
+	[_connectionBox setFrame:NSMakeRect( outerPadding, sectionStartY, sectionWidth, connectionHeight )];
 	NSView *connectionView = [_connectionBox contentView];
-	const CGFloat innerLeft = 16.0;
-	const CGFloat innerRight = 16.0;
-	const CGFloat row1Y = 10.0;
-	const CGFloat row2Y = 46.0;
-	const CGFloat row3Y = 82.0;
-	const CGFloat row4Y = 118.0;
-	const CGFloat row5Y = 154.0;
-	const CGFloat row6Y = 190.0;
-	const CGFloat row7Y = 226.0;
+	const CGFloat innerLeft = ultraCompact ? 12.0 : 16.0;
+	const CGFloat innerRight = ultraCompact ? 12.0 : 16.0;
 	const CGFloat availableWidth = connectionView.bounds.size.width - innerLeft - innerRight;
+	const CGFloat commandGap = ultraCompact ? 4.0 : (tightCompact ? 6.0 : 8.0);
+	const CGFloat popupHeight = ultraCompact ? 26.0 : 28.0;
+	const CGFloat buttonHeight = ultraCompact ? 26.0 : (compact ? 28.0 : 30.0);
+	const CGFloat checkHeight = ultraCompact ? 24.0 : 26.0;
+	const CGFloat rowTextOffset = ultraCompact ? 3.0 : 4.0;
+	const CGFloat rowIndicatorOffset = ultraCompact ? 1.0 : 2.0;
 
-	const CGFloat portPopupWidth = std::max( 184.0, std::min( 248.0, availableWidth * 0.30 ) );
-	const CGFloat portLabelWidth = 35.0;
-	const CGFloat portPopupX = connectionView.bounds.size.width - innerRight - portPopupWidth;
-	const CGFloat portLabelX = portPopupX - 42.0;
-	const CGFloat devicePopupX = 258.0;
-	const CGFloat indicatorX = 210.0;
-	const CGFloat devicePopupWidth = std::max( 170.0, portLabelX - 16.0 - devicePopupX );
-
-	[_deviceLabel setFrame:NSMakeRect( innerLeft, row1Y + 4.0, 48.0, 24.0 )];
-	[_connectionIndicator setFrame:NSMakeRect( indicatorX, row1Y + 2.0, 18.0, 18.0 )];
-	[_devicePopup setFrame:NSMakeRect( devicePopupX, row1Y, devicePopupWidth, 28.0 )];
-	[_portLabel setFrame:NSMakeRect( portLabelX, row1Y + 4.0, portLabelWidth, 24.0 )];
-	[_portPopup setFrame:NSMakeRect( portPopupX, row1Y, portPopupWidth, 28.0 )];
-
-	const CGFloat commandGap = 8.0;
-	const CGFloat commandButtonWidth = floor( (availableWidth - commandGap * 4.0) / 5.0 );
-	NSArray<NSButton *> *connectionButtons = @[ _connectButton, _disconnectButton, _refreshPortsButton, _diagnoseButton, _factoryResetButton ];
-	for ( NSInteger index = 0; index < connectionButtons.count; index++ )
+	if ( compact )
 	{
-		NSButton *button = connectionButtons[index];
-		const CGFloat buttonX = innerLeft + index * (commandButtonWidth + commandGap);
-		[button setFrame:NSMakeRect( buttonX, row2Y, commandButtonWidth, 30.0 )];
+		const CGFloat rowBase = ultraCompact ? 8.0 : 10.0;
+		const CGFloat rowStep = ultraCompact ? 28.0 : (tightCompact ? 30.0 : 32.0);
+		const CGFloat row1Y = rowBase + rowStep * 0.0;
+		const CGFloat row2Y = rowBase + rowStep * 1.0;
+		const CGFloat row3Y = rowBase + rowStep * 2.0;
+		const CGFloat row4Y = rowBase + rowStep * 3.0;
+		const CGFloat row5Y = rowBase + rowStep * 4.0;
+		const CGFloat row6Y = rowBase + rowStep * 5.0;
+		const CGFloat row7Y = rowBase + rowStep * 6.0;
+		const CGFloat row8Y = rowBase + rowStep * 7.0;
+		const CGFloat row9Y = rowBase + rowStep * 8.0;
+		const CGFloat row10Y = rowBase + rowStep * 9.0;
+
+		const CGFloat indicatorX = ultraCompact ? 88.0 : 96.0;
+		const CGFloat devicePopupX = ultraCompact ? 112.0 : 126.0;
+		[_deviceLabel setFrame:NSMakeRect( innerLeft, row1Y + rowTextOffset, 48.0, 24.0 )];
+		[_connectionIndicator setFrame:NSMakeRect( indicatorX, row1Y + rowIndicatorOffset, 18.0, 18.0 )];
+		[_devicePopup setFrame:NSMakeRect( devicePopupX, row1Y, connectionView.bounds.size.width - innerRight - devicePopupX, popupHeight )];
+
+		[_portLabel setFrame:NSMakeRect( innerLeft, row2Y + rowTextOffset, 35.0, 24.0 )];
+		[_portPopup setFrame:NSMakeRect( 56.0, row2Y, connectionView.bounds.size.width - innerRight - 56.0, popupHeight )];
+
+		const CGFloat topButtonWidth = floor( (availableWidth - commandGap * 2.0) / 3.0 );
+		[_connectButton setFrame:NSMakeRect( innerLeft, row3Y, topButtonWidth, buttonHeight )];
+		[_disconnectButton setFrame:NSMakeRect( innerLeft + topButtonWidth + commandGap, row3Y, topButtonWidth, buttonHeight )];
+		[_refreshPortsButton setFrame:NSMakeRect( innerLeft + (topButtonWidth + commandGap) * 2.0, row3Y, availableWidth - (topButtonWidth + commandGap) * 2.0, buttonHeight )];
+
+		const CGFloat secondButtonWidth = floor( (availableWidth - commandGap) / 2.0 );
+		[_diagnoseButton setFrame:NSMakeRect( innerLeft, row4Y, secondButtonWidth, buttonHeight )];
+		[_factoryResetButton setFrame:NSMakeRect( innerLeft + secondButtonWidth + commandGap, row4Y, availableWidth - secondButtonWidth - commandGap, buttonHeight )];
+
+		[_measurementLabel setFrame:NSMakeRect( innerLeft, row5Y + rowTextOffset, 68.0, 24.0 )];
+		[_measurementIndicator setFrame:NSMakeRect( indicatorX, row5Y + rowIndicatorOffset, 18.0, 18.0 )];
+		[_samplesStatusLabel setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 96.0, row5Y + rowTextOffset, 96.0, 24.0 )];
+		[_measurementStatusLabel setFrame:NSMakeRect( devicePopupX, row5Y + rowTextOffset, CGRectGetMinX( [_samplesStatusLabel frame] ) - 14.0 - devicePopupX, 24.0 )];
+
+		const CGFloat measurementButtonWidth = floor( (availableWidth - commandGap * 2.0) / 3.0 );
+		[_startLoggingButton setFrame:NSMakeRect( innerLeft, row6Y, measurementButtonWidth, buttonHeight )];
+		[_newMeasurementButton setFrame:NSMakeRect( innerLeft + measurementButtonWidth + commandGap, row6Y, measurementButtonWidth, buttonHeight )];
+		[_stopLoggingButton setFrame:NSMakeRect( innerLeft + (measurementButtonWidth + commandGap) * 2.0, row6Y, availableWidth - (measurementButtonWidth + commandGap) * 2.0, buttonHeight )];
+		[_liveOnlyCheck setFrame:NSMakeRect( innerLeft, row7Y + (ultraCompact ? 1.0 : 2.0), availableWidth, checkHeight )];
+
+		const CGFloat intervalPopupX = ultraCompact ? 112.0 : (tightCompact ? 136.0 : 146.0);
+		const CGFloat intervalPopupWidth = ultraCompact ? 76.0 : (tightCompact ? 88.0 : 96.0);
+		const CGFloat longTermCheckX = intervalPopupX + intervalPopupWidth + 8.0;
+		const CGFloat longTermCheckWidth = ultraCompact ? 118.0 : (tightCompact ? 126.0 : 132.0);
+		const CGFloat longTermFieldWidth = ultraCompact ? 46.0 : (tightCompact ? 52.0 : 56.0);
+		const CGFloat longTermFieldX = std::max( longTermCheckX + longTermCheckWidth + 8.0,
+												 connectionView.bounds.size.width - innerRight - longTermFieldWidth - (ultraCompact ? 34.0 : (tightCompact ? 56.0 : 72.0)) );
+		const CGFloat longTermSuffixX = CGRectGetMaxX( NSMakeRect( longTermFieldX, row8Y, longTermFieldWidth, popupHeight ) ) + 6.0;
+
+		[_intervalTitleLabel setFrame:NSMakeRect( innerLeft, row8Y + rowTextOffset, ultraCompact ? 96.0 : (tightCompact ? 110.0 : 128.0), 24.0 )];
+		[_intervalPopup setFrame:NSMakeRect( intervalPopupX, row8Y, intervalPopupWidth, popupHeight )];
+		[_longTermCheck setFrame:NSMakeRect( longTermCheckX, row8Y + (ultraCompact ? 1.0 : 2.0), longTermCheckWidth, checkHeight )];
+		[_longTermField setFrame:NSMakeRect( longTermFieldX, row8Y, longTermFieldWidth, popupHeight )];
+		[_longTermSuffixLabel setFrame:NSMakeRect( longTermSuffixX, row8Y + rowTextOffset, connectionView.bounds.size.width - innerRight - longTermSuffixX, 24.0 )];
+
+		[_csvLabel setFrame:NSMakeRect( innerLeft, row9Y + rowTextOffset, 36.0, 24.0 )];
+		[_csvBrowseButton setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 30.0, row9Y, 30.0, popupHeight )];
+		[_csvField setFrame:NSMakeRect( 56.0, row9Y, CGRectGetMinX( [_csvBrowseButton frame] ) - 8.0 - 56.0, popupHeight )];
+
+		const CGFloat browseButtonWidth = ultraCompact ? 108.0 : 118.0;
+		[_browseCsvButton setFrame:NSMakeRect( innerLeft, row10Y, browseButtonWidth, buttonHeight )];
+		[_fileIndicator setFrame:NSMakeRect( innerLeft + browseButtonWidth + 8.0, row10Y + (ultraCompact ? 4.0 : 6.0), 18.0, 18.0 )];
+		[_fileStatusLabel setFrame:NSMakeRect( CGRectGetMaxX( [_fileIndicator frame] ) + 10.0, row10Y + rowTextOffset, connectionView.bounds.size.width - innerRight - (CGRectGetMaxX( [_fileIndicator frame] ) + 10.0), 24.0 )];
+	}
+	else
+	{
+		const CGFloat row1Y = 10.0;
+		const CGFloat row2Y = 46.0;
+		const CGFloat row3Y = 82.0;
+		const CGFloat row4Y = 118.0;
+		const CGFloat row5Y = 154.0;
+		const CGFloat row6Y = 190.0;
+		const CGFloat row7Y = 226.0;
+
+		const CGFloat portPopupWidth = std::max( 184.0, std::min( 248.0, availableWidth * 0.30 ) );
+		const CGFloat portLabelWidth = 35.0;
+		const CGFloat portPopupX = connectionView.bounds.size.width - innerRight - portPopupWidth;
+		const CGFloat portLabelX = portPopupX - 42.0;
+		const CGFloat devicePopupX = 258.0;
+		const CGFloat indicatorX = 210.0;
+		const CGFloat devicePopupWidth = std::max( 170.0, portLabelX - 16.0 - devicePopupX );
+
+		[_deviceLabel setFrame:NSMakeRect( innerLeft, row1Y + 4.0, 48.0, 24.0 )];
+		[_connectionIndicator setFrame:NSMakeRect( indicatorX, row1Y + 2.0, 18.0, 18.0 )];
+		[_devicePopup setFrame:NSMakeRect( devicePopupX, row1Y, devicePopupWidth, 28.0 )];
+		[_portLabel setFrame:NSMakeRect( portLabelX, row1Y + 4.0, portLabelWidth, 24.0 )];
+		[_portPopup setFrame:NSMakeRect( portPopupX, row1Y, portPopupWidth, 28.0 )];
+
+		const CGFloat commandButtonWidth = floor( (availableWidth - commandGap * 4.0) / 5.0 );
+		NSArray<NSButton *> *connectionButtons = @[ _connectButton, _disconnectButton, _refreshPortsButton, _diagnoseButton, _factoryResetButton ];
+		for ( NSInteger index = 0; index < connectionButtons.count; index++ )
+		{
+			NSButton *button = connectionButtons[index];
+			const CGFloat buttonX = innerLeft + index * (commandButtonWidth + commandGap);
+			[button setFrame:NSMakeRect( buttonX, row2Y, commandButtonWidth, 30.0 )];
+		}
+
+		[_measurementLabel setFrame:NSMakeRect( innerLeft, row3Y + 4.0, 68.0, 24.0 )];
+		[_measurementIndicator setFrame:NSMakeRect( indicatorX, row3Y + 2.0, 18.0, 18.0 )];
+		[_samplesStatusLabel setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 122.0, row3Y + 4.0, 122.0, 24.0 )];
+		[_measurementStatusLabel setFrame:NSMakeRect( devicePopupX, row3Y + 4.0, CGRectGetMinX( [_samplesStatusLabel frame] ) - 14.0 - devicePopupX, 24.0 )];
+
+		const CGFloat measurementButtonsWidth = availableWidth * 0.62;
+		const CGFloat measurementButtonWidth = floor( (measurementButtonsWidth - commandGap * 2.0) / 3.0 );
+		[_startLoggingButton setFrame:NSMakeRect( innerLeft, row4Y, measurementButtonWidth, 30.0 )];
+		[_newMeasurementButton setFrame:NSMakeRect( innerLeft + measurementButtonWidth + commandGap, row4Y, measurementButtonWidth, 30.0 )];
+		[_stopLoggingButton setFrame:NSMakeRect( innerLeft + (measurementButtonWidth + commandGap) * 2.0, row4Y, measurementButtonWidth, 30.0 )];
+		const CGFloat liveOnlyX = innerLeft + measurementButtonWidth * 3.0 + commandGap * 2.0 + 12.0;
+		[_liveOnlyCheck setFrame:NSMakeRect( liveOnlyX, row4Y + 2.0, connectionView.bounds.size.width - innerRight - liveOnlyX, 26.0 )];
+
+		[_intervalTitleLabel setFrame:NSMakeRect( innerLeft, row5Y + 4.0, 136.0, 24.0 )];
+		[_intervalPopup setFrame:NSMakeRect( 164.0, row5Y, 104.0, 28.0 )];
+		[_longTermCheck setFrame:NSMakeRect( 276.0, row5Y + 2.0, 136.0, 26.0 )];
+		[_longTermField setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 214.0, row5Y, 58.0, 28.0 )];
+		[_longTermSuffixLabel setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 148.0, row5Y + 4.0, 132.0, 24.0 )];
+
+		[_csvLabel setFrame:NSMakeRect( innerLeft, row6Y + 4.0, 36.0, 24.0 )];
+		[_csvBrowseButton setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 30.0, row6Y, 30.0, 28.0 )];
+		[_csvField setFrame:NSMakeRect( 56.0, row6Y, CGRectGetMinX( [_csvBrowseButton frame] ) - 8.0 - 56.0, 28.0 )];
+
+		[_browseCsvButton setFrame:NSMakeRect( innerLeft, row7Y, 118.0, 30.0 )];
+		[_fileIndicator setFrame:NSMakeRect( 144.0, row7Y + 6.0, 18.0, 18.0 )];
+		[_fileStatusLabel setFrame:NSMakeRect( 176.0, row7Y + 4.0, connectionView.bounds.size.width - innerRight - 176.0, 24.0 )];
 	}
 
-	[_measurementLabel setFrame:NSMakeRect( innerLeft, row3Y + 4.0, 68.0, 24.0 )];
-	[_measurementIndicator setFrame:NSMakeRect( indicatorX, row3Y + 2.0, 18.0, 18.0 )];
-	[_samplesStatusLabel setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 122.0, row3Y + 4.0, 122.0, 24.0 )];
-	[_measurementStatusLabel setFrame:NSMakeRect( devicePopupX, row3Y + 4.0, CGRectGetMinX( [_samplesStatusLabel frame] ) - 14.0 - devicePopupX, 24.0 )];
-
-	const CGFloat measurementButtonsWidth = availableWidth * 0.62;
-	const CGFloat measurementButtonWidth = floor( (measurementButtonsWidth - commandGap * 2.0) / 3.0 );
-	[_startLoggingButton setFrame:NSMakeRect( innerLeft, row4Y, measurementButtonWidth, 30.0 )];
-	[_newMeasurementButton setFrame:NSMakeRect( innerLeft + measurementButtonWidth + commandGap, row4Y, measurementButtonWidth, 30.0 )];
-	[_stopLoggingButton setFrame:NSMakeRect( innerLeft + (measurementButtonWidth + commandGap) * 2.0, row4Y, measurementButtonWidth, 30.0 )];
-	const CGFloat liveOnlyX = innerLeft + measurementButtonWidth * 3.0 + commandGap * 2.0 + 12.0;
-	[_liveOnlyCheck setFrame:NSMakeRect( liveOnlyX, row4Y + 2.0, connectionView.bounds.size.width - innerRight - liveOnlyX, 26.0 )];
-
-	[_intervalTitleLabel setFrame:NSMakeRect( innerLeft, row5Y + 4.0, 136.0, 24.0 )];
-	[_intervalPopup setFrame:NSMakeRect( 164.0, row5Y, 104.0, 28.0 )];
-	[_longTermCheck setFrame:NSMakeRect( 276.0, row5Y + 2.0, 136.0, 26.0 )];
-	[_longTermField setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 214.0, row5Y, 58.0, 28.0 )];
-	[_longTermSuffixLabel setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 148.0, row5Y + 4.0, 132.0, 24.0 )];
-
-	[_csvLabel setFrame:NSMakeRect( innerLeft, row6Y + 4.0, 36.0, 24.0 )];
-	[_csvBrowseButton setFrame:NSMakeRect( connectionView.bounds.size.width - innerRight - 30.0, row6Y, 30.0, 28.0 )];
-	[_csvField setFrame:NSMakeRect( 56.0, row6Y, CGRectGetMinX( [_csvBrowseButton frame] ) - 8.0 - 56.0, 28.0 )];
-
-	[_browseCsvButton setFrame:NSMakeRect( innerLeft, row7Y, 118.0, 30.0 )];
-	[_fileIndicator setFrame:NSMakeRect( 144.0, row7Y + 6.0, 18.0, 18.0 )];
-	[_fileStatusLabel setFrame:NSMakeRect( 176.0, row7Y + 4.0, connectionView.bounds.size.width - innerRight - 176.0, 24.0 )];
-
-	const CGFloat cardsTop = CGRectGetMaxY( [_connectionBox frame] ) + 12.0;
+	const CGFloat cardsTop = CGRectGetMaxY( [_connectionBox frame] ) + (ultraCompact ? 8.0 : 12.0);
 	const NSInteger cardRows = ([self activeChannelCount] + 1) / 2;
 	CGFloat currentY = cardsTop;
 	const CGFloat cardWidth = (leftWidth - outerPadding * 2.0 - cardGap) / 2.0;
@@ -1373,36 +1593,51 @@ namespace
 
 	[_plotSelectionLabel setFrame:NSMakeRect( 16.0, currentY, 120.0, 24.0 )];
 	for ( int i = 0; i < 6; i++ )
-		[_plotChecks[i] setFrame:NSMakeRect( 145.0 + i * 38.0, currentY - 1.0, 36.0, 24.0 )];
-	const CGFloat debugWidth = 148.0;
-	const CGFloat renameWidth = 132.0;
-	const CGFloat actionGap = 10.0;
-	const CGFloat debugX = leftWidth - outerPadding - debugWidth;
-	const CGFloat renameX = debugX - actionGap - renameWidth;
-	[_renameChannelsButton setFrame:NSMakeRect( renameX, currentY - 2.0, renameWidth, 28.0 )];
-	[_debugInfoButton setFrame:NSMakeRect( debugX, currentY - 2.0, debugWidth, 28.0 )];
+		[_plotChecks[i] setFrame:NSMakeRect( 145.0 + i * (ultraCompact ? 30.0 : (tightCompact ? 34.0 : 38.0)), currentY - 1.0, ultraCompact ? 28.0 : 32.0, 24.0 )];
+	const CGFloat debugWidth = ultraCompact ? 126.0 : 148.0;
+	const CGFloat renameWidth = ultraCompact ? 112.0 : 132.0;
+	if ( compact )
+	{
+		[_renameChannelsButton setFrame:NSMakeRect( 16.0, currentY + 24.0, renameWidth, 28.0 )];
+		[_debugInfoButton setFrame:NSMakeRect( 16.0 + renameWidth + 10.0, currentY + 24.0, debugWidth, 28.0 )];
+		currentY += ultraCompact ? 50.0 : 54.0;
+	}
+	else
+	{
+		const CGFloat actionGap = 10.0;
+		const CGFloat debugX = leftWidth - outerPadding - debugWidth;
+		const CGFloat renameX = debugX - actionGap - renameWidth;
+		[_renameChannelsButton setFrame:NSMakeRect( renameX, currentY - 2.0, renameWidth, 28.0 )];
+		[_debugInfoButton setFrame:NSMakeRect( debugX, currentY - 2.0, debugWidth, 28.0 )];
+		currentY += 32.0;
+	}
 
-	currentY += 32.0;
 	[_messagesLabel setFrame:NSMakeRect( 16.0, currentY, 90.0, 24.0 )];
 	NSScrollView *messagesScroll = [_messagesView enclosingScrollView];
-	const CGFloat messagesHeight = std::max( 150.0, std::min( 220.0, floor( _leftScrollView.bounds.size.height * 0.18 ) ) );
-	[messagesScroll setFrame:NSMakeRect( outerPadding, currentY + 26.0, sectionWidth, messagesHeight )];
+	const CGFloat messagesTop = currentY + 26.0;
+	const CGFloat controlHeight = ([self selectedDeviceType] == PressureLoggerDevice_MaxiGauge) ? 516.0 : 374.0;
+	const CGFloat rawBoxHeight = ultraCompact ? 50.0 : (tightCompact ? 54.0 : 58.0);
+	const CGFloat toggleHeight = ultraCompact ? 26.0 : (tightCompact ? 28.0 : 30.0);
+	const CGFloat verticalGap = ultraCompact ? 6.0 : (tightCompact ? 8.0 : 10.0);
+	const CGFloat reservedBottom = 16.0 + rawBoxHeight + verticalGap + toggleHeight + (tightCompact ? 6.0 : 10.0) + (_controlVisible ? (10.0 + controlHeight) : 0.0);
+	const CGFloat maxMessagesHeight = ultraCompact ? 88.0 : (tightCompact ? 100.0 : (compact ? 120.0 : 150.0));
+	const CGFloat messagesHeight = std::max( ultraCompact ? 56.0 : (tightCompact ? 64.0 : 80.0), std::min( maxMessagesHeight, floor( totalHeight - reservedBottom - messagesTop ) ) );
+	[messagesScroll setFrame:NSMakeRect( outerPadding, messagesTop, sectionWidth, messagesHeight )];
 
-	currentY += messagesHeight + 34.0;
-	[_rawBox setFrame:NSMakeRect( outerPadding, currentY, sectionWidth, 64.0 )];
+	currentY = messagesTop + messagesHeight + verticalGap;
+	[_rawBox setFrame:NSMakeRect( outerPadding, currentY, sectionWidth, rawBoxHeight )];
 	NSView *rawView = [_rawBox contentView];
-	[_rawHelpButton setFrame:NSMakeRect( rawView.bounds.size.width - 38.0, 8.0, 34.0, 30.0 )];
-	[_sendRawButton setFrame:NSMakeRect( rawView.bounds.size.width - 192.0, 8.0, 150.0, 30.0 )];
-	[_rawField setFrame:NSMakeRect( 14.0, 10.0, CGRectGetMinX( [_sendRawButton frame] ) - 18.0, 28.0 )];
+	[_rawHelpButton setFrame:NSMakeRect( rawView.bounds.size.width - 36.0, ultraCompact ? 6.0 : 8.0, 32.0, buttonHeight )];
+	[_sendRawButton setFrame:NSMakeRect( rawView.bounds.size.width - (ultraCompact ? 164.0 : 192.0), ultraCompact ? 6.0 : 8.0, ultraCompact ? 124.0 : 150.0, buttonHeight )];
+	[_rawField setFrame:NSMakeRect( 14.0, ultraCompact ? 7.0 : 10.0, CGRectGetMinX( [_sendRawButton frame] ) - 18.0, popupHeight )];
 
-	currentY += 74.0;
-	[_toggleControlButton setFrame:NSMakeRect( outerPadding, currentY, sectionWidth, 30.0 )];
-	currentY += 40.0;
+	currentY += rawBoxHeight + verticalGap;
+	[_toggleControlButton setFrame:NSMakeRect( outerPadding, currentY, sectionWidth, toggleHeight )];
+	currentY += toggleHeight + (tightCompact ? 6.0 : 10.0);
 
 	if ( _controlVisible )
 	{
 		[_controlBox setHidden:NO];
-		const CGFloat controlHeight = ([self selectedDeviceType] == PressureLoggerDevice_MaxiGauge) ? 516.0 : 374.0;
 		[_controlBox setFrame:NSMakeRect( outerPadding, currentY, sectionWidth, controlHeight )];
 		currentY += controlHeight + 10.0;
 	}
@@ -1419,16 +1654,25 @@ namespace
 	[_plotView setFrame:NSMakeRect( 20.0, 20.0, rightWidth - 40.0, rightHeight - footerHeight - 30.0 )];
 	[_plotFooterView setFrame:NSMakeRect( 0, rightHeight - footerHeight, rightWidth, footerHeight )];
 
-	[_plotHomeButton setFrame:NSMakeRect( 20.0, 14.0, 82.0, 30.0 )];
-	[_plotZoomOutButton setFrame:NSMakeRect( 110.0, 14.0, 44.0, 30.0 )];
-	[_plotZoomInButton setFrame:NSMakeRect( 162.0, 14.0, 44.0, 30.0 )];
+	const BOOL compactFooter = (rightWidth < 760.0);
+	const CGFloat homeWidth = compactFooter ? 72.0 : 82.0;
+	const CGFloat zoomWidth = 44.0;
+	const CGFloat navGap = compactFooter ? 6.0 : 8.0;
+	const CGFloat clearWidth = compactFooter ? 88.0 : 118.0;
+	const CGFloat externalWidth = compactFooter ? 108.0 : 128.0;
+	const CGFloat csvWidth = compactFooter ? 96.0 : 118.0;
+	const CGFloat actionGap = compactFooter ? 8.0 : 10.0;
+
+	[_plotHomeButton setFrame:NSMakeRect( 20.0, 14.0, homeWidth, 30.0 )];
+	[_plotZoomOutButton setFrame:NSMakeRect( 20.0 + homeWidth + navGap, 14.0, zoomWidth, 30.0 )];
+	[_plotZoomInButton setFrame:NSMakeRect( 20.0 + homeWidth + navGap + zoomWidth + navGap, 14.0, zoomWidth, 30.0 )];
 
 	CGFloat buttonRight = rightWidth - 20.0;
-	[_plotCsvButton setFrame:NSMakeRect( buttonRight - 118.0, 14.0, 118.0, 30.0 )];
-	buttonRight -= 128.0;
-	[_externalPlotButton setFrame:NSMakeRect( buttonRight - 128.0, 14.0, 128.0, 30.0 )];
-	buttonRight -= 138.0;
-	[_clearPlotButton setFrame:NSMakeRect( buttonRight - 118.0, 14.0, 118.0, 30.0 )];
+	[_plotCsvButton setFrame:NSMakeRect( buttonRight - csvWidth, 14.0, csvWidth, 30.0 )];
+	buttonRight -= csvWidth + actionGap;
+	[_externalPlotButton setFrame:NSMakeRect( buttonRight - externalWidth, 14.0, externalWidth, 30.0 )];
+	buttonRight -= externalWidth + actionGap;
+	[_clearPlotButton setFrame:NSMakeRect( buttonRight - clearWidth, 14.0, clearWidth, 30.0 )];
 }
 
 

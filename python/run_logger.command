@@ -10,4 +10,17 @@ elif [ -f "$HOME/venvs/cdt_pressure_logger_v9/bin/activate" ]; then
 fi
 
 cd "$ROOT_DIR"
+
+if ! python3 - <<'PY' >/dev/null 2>&1
+import matplotlib  # noqa: F401
+import serial  # noqa: F401
+PY
+then
+	echo "Python-Abhaengigkeiten fehlen."
+	echo "Bitte einmal ausfuehren:"
+	echo "  python3 -m pip install -r python/requirements.txt"
+	read -r "REPLY?Weiter mit Enter beenden..."
+	exit 1
+fi
+
 exec python3 "$SCRIPT_DIR/cdt_pressure_logger_v9.py"

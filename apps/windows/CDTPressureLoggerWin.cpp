@@ -2100,7 +2100,7 @@ void CMainWindow::ApplyDefaultValues()
 
 int CMainWindow::MinimumClientWidth() const
 {
-	return 1420;
+	return 1160;
 }
 
 
@@ -2131,12 +2131,11 @@ void CMainWindow::EnsureMinimumClientSize()
 	RECT client_rect;
 	GetClientRect( hWnd, &client_rect );
 
-	const int required_client_width = MinimumClientWidth();
 	const int required_client_height = MinimumClientHeight();
-	if ( (client_rect.right >= required_client_width) && (client_rect.bottom >= required_client_height) )
+	if ( client_rect.bottom >= required_client_height )
 		return;
 
-	RECT window_rect = {0, 0, max( client_rect.right, required_client_width ), max( client_rect.bottom, required_client_height )};
+	RECT window_rect = {0, 0, client_rect.right, required_client_height};
 	AdjustWindowRectEx( &window_rect,
 						static_cast<DWORD>( GetWindowLongPtrW( hWnd, GWL_STYLE ) ),
 						GetMenu( hWnd ) != 0,
@@ -2227,21 +2226,21 @@ void CMainWindow::LayoutChildren()
 
 	const int outer_margin = 10;
 	const int right_margin = 20;
-	const int split_gap = 28;
-	const int plot_min_width = 660;
-	const int left_min_width = 720;
+	const int split_gap = 20;
+	const int plot_min_width = 560;
+	const int left_min_width = 560;
 	const int left_max_width = 980;
 	const int total_width = max( 0, client_rect.right - outer_margin * 2 - split_gap );
 
-	int left_width = min( left_max_width, max( left_min_width, (total_width * 40) / 100 ) );
+	int left_width = min( left_max_width, max( left_min_width, (total_width * 42) / 100 ) );
 	if ( (total_width - left_width) < plot_min_width )
 		left_width = max( left_min_width, total_width - plot_min_width );
-	left_width = min( left_width, max( left_min_width, total_width - 520 ) );
+	left_width = min( left_width, max( left_min_width, total_width - 360 ) );
 
 	const int left_x = outer_margin;
 	const int right_left = left_x + left_width + split_gap;
 	const int right_width = max( 520, client_rect.right - right_left - right_margin );
-	const bool compact = (left_width < 860);
+	const bool compact = (left_width < 760);
 
 	MoveWindow( hTitleLabel, 16, 12, left_width, 32, TRUE );
 
@@ -2362,7 +2361,7 @@ void CMainWindow::LayoutChildren()
 	const int card_gap_x = 14;
 	const int card_gap_y = 12;
 	const int card_height = 138;
-	const int card_width = max( 320, (left_width - card_gap_x - 4) / 2 );
+	const int card_width = max( 250, (left_width - card_gap_x - 4) / 2 );
 	const int active_cards = ActiveChannelCount();
 	for ( int i = 0; i < active_cards; i++ )
 	{
@@ -2421,15 +2420,25 @@ void CMainWindow::LayoutChildren()
 	RECT plot_rect = {right_left, 50, right_left + right_width, max( 220, bottom_buttons_y - 14 )};
 	MainPlot.SetGeometry( plot_rect );
 
-	int button_right = max( right_left + 420, client_rect.right - 20 );
-	MoveWindow( hPlotCsvButton, button_right - 120, bottom_buttons_y, 120, 30, TRUE );
-	button_right -= 130;
-	MoveWindow( hExternalPlotButton, button_right - 140, bottom_buttons_y, 140, 30, TRUE );
-	button_right -= 150;
-	MoveWindow( hClearPlotButton, button_right - 110, bottom_buttons_y, 110, 30, TRUE );
-	MoveWindow( hPlotZoomInButton, right_left + 138, bottom_buttons_y, 42, 30, TRUE );
-	MoveWindow( hPlotZoomOutButton, right_left + 88, bottom_buttons_y, 42, 30, TRUE );
-	MoveWindow( hPlotHomeButton, right_left, bottom_buttons_y, 80, 30, TRUE );
+	const bool compact_footer = (right_width < 720);
+	const int home_width = compact_footer ? 72 : 80;
+	const int zoom_width = 42;
+	const int nav_gap = compact_footer ? 6 : 8;
+	const int csv_width = compact_footer ? 96 : 120;
+	const int external_width = compact_footer ? 108 : 140;
+	const int clear_width = compact_footer ? 88 : 110;
+	const int action_gap = compact_footer ? 8 : 10;
+
+	MoveWindow( hPlotHomeButton, right_left, bottom_buttons_y, home_width, 30, TRUE );
+	MoveWindow( hPlotZoomOutButton, right_left + home_width + nav_gap, bottom_buttons_y, zoom_width, 30, TRUE );
+	MoveWindow( hPlotZoomInButton, right_left + home_width + nav_gap + zoom_width + nav_gap, bottom_buttons_y, zoom_width, 30, TRUE );
+
+	int button_right = client_rect.right - 20;
+	MoveWindow( hPlotCsvButton, button_right - csv_width, bottom_buttons_y, csv_width, 30, TRUE );
+	button_right -= csv_width + action_gap;
+	MoveWindow( hExternalPlotButton, button_right - external_width, bottom_buttons_y, external_width, 30, TRUE );
+	button_right -= external_width + action_gap;
+	MoveWindow( hClearPlotButton, button_right - clear_width, bottom_buttons_y, clear_width, 30, TRUE );
 
 	for ( size_t i = 0; i < ControlPanelWindows.size(); i++ )
 		ShowWindow( ControlPanelWindows[i], bControlVisible ? SW_SHOW : SW_HIDE );
